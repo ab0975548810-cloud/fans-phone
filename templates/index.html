@@ -55,6 +55,63 @@
         .hw-red { color: #b91c1c; font-weight: 700; } 
         .hw-blue { color: #1e3a8a; font-weight: 700; }
         .hw-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; font-size: 1.4rem; }
+
+
+        /* ===== V1.1 自適應 POS 介面 ===== */
+        body { min-height: 100dvh; }
+        #mainAppContent { max-width: 1920px; margin: 0 auto; }
+        .cashier-layout { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(360px, .8fr); gap: 16px; align-items: start; }
+        .cashier-products-panel, .cart-container { border-radius: 16px !important; }
+        .cashier-products-panel { min-height: 70vh; }
+        .cart-container { position: sticky; top: 12px; background: #fff; max-height: calc(100dvh - 28px); }
+        .cart-scroll-area { max-height: 46vh; overflow-y: auto; overscroll-behavior: contain; }
+        #posProductGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 10px; }
+        #posProductGrid.grid-roomy { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+        #posProductGrid.grid-compact { grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 8px; }
+        .product-card { border-radius: 14px; overflow: hidden; touch-action: manipulation; user-select: none; }
+        .product-card .card-body { min-height: 88px; padding: 12px !important; }
+        #posProductGrid.grid-roomy .product-card .card-body { min-height: 112px; padding: 16px !important; }
+        #posProductGrid.grid-roomy .product-card h6 { font-size: 1.02rem !important; }
+        #posProductGrid.grid-compact .product-card .card-body { min-height: 74px; padding: 9px !important; }
+        #posProductGrid.grid-compact .product-card h6 { font-size: .82rem !important; }
+        .mobile-cart-bar, .mobile-cart-close, .mobile-cart-backdrop { display: none; }
+        .order-edit-row { border: 1px solid #dee2e6; border-radius: 12px; padding: 10px; background: #fff; }
+        .audit-note { font-size: .78rem; line-height: 1.45; }
+
+        @media (min-width: 768px) and (max-width: 1199.98px) {
+            .cashier-layout { grid-template-columns: minmax(0, 1.35fr) minmax(320px, .9fr); gap: 12px; }
+            #posProductGrid { grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
+            #posProductGrid.grid-roomy { grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); }
+            #posProductGrid.grid-compact { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+            .cart-container { max-height: calc(100dvh - 24px); }
+        }
+
+        @media (max-width: 767.98px) {
+            #mainAppContent { padding-bottom: 88px !important; }
+            #mainAppContent > header { align-items: flex-start !important; }
+            #mainAppContent > header h3 { font-size: 1rem; width: 100%; }
+            #liveClock { font-size: .72rem !important; margin-right: 0 !important; }
+            .nav-tabs .nav-link { font-size: .92rem; padding: .65rem .7rem; }
+            .cashier-layout { display: block; }
+            .cashier-products-panel { min-height: auto; border-radius: 12px !important; }
+            #productSearchInput { min-height: 46px; font-size: 1rem; }
+            #posProductGrid, #posProductGrid.grid-roomy, #posProductGrid.grid-compact { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+            .product-card .card-body, #posProductGrid.grid-roomy .product-card .card-body, #posProductGrid.grid-compact .product-card .card-body { min-height: 92px; padding: 11px !important; }
+            .product-card h6, #posProductGrid.grid-roomy .product-card h6, #posProductGrid.grid-compact .product-card h6 { font-size: .9rem !important; }
+            .cashier-cart-column { position: fixed; inset: auto 0 0 0; z-index: 1042; transform: translateY(105%); transition: transform .22s ease; padding: 0 8px 8px; }
+            body.mobile-cart-open .cashier-cart-column { transform: translateY(0); }
+            .cashier-cart-column .cart-container { position: relative; top: auto; max-height: 84dvh; height: auto !important; border-radius: 18px 18px 12px 12px !important; box-shadow: 0 -8px 30px rgba(15,23,42,.18); overflow-y: auto; }
+            .cart-scroll-area { max-height: 40dvh; }
+            .mobile-cart-close { display: inline-flex; }
+            .mobile-cart-bar { position: fixed; left: 10px; right: 10px; bottom: max(10px, env(safe-area-inset-bottom)); z-index: 1038; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 0; border-radius: 16px; padding: 12px 15px; box-shadow: 0 8px 28px rgba(0,0,0,.22); }
+            .mobile-cart-backdrop { position: fixed; inset: 0; z-index: 1040; background: rgba(15,23,42,.48); }
+            body.mobile-cart-open .mobile-cart-backdrop { display: block; }
+            body.mobile-cart-open { overflow: hidden; }
+            .table-rwd tbody td[data-label="操作"] { justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+            .modal-dialog { margin: .55rem; }
+            .order-edit-row .form-select, .order-edit-row .form-control { min-height: 42px; }
+        }
+
     </style>
 </head>
 <body>
@@ -122,20 +179,20 @@
     <div class="tab-content" id="posTabsContent">
         <!-- 🛒 收銀點單 -->
         <div class="tab-pane fade show active" id="cashier" role="tabpanel">
-            <div class="row g-3">
-                <div class="col-lg-7">
-                    <div class="p-2 bg-white rounded border h-100">
+            <div class="cashier-layout">
+                <div class="cashier-products-column">
+                    <div class="p-2 bg-white rounded border h-100 cashier-products-panel">
                         <div class="d-flex justify-content-between align-items-center mb-2 gap-2">
                             <h5 class="fw-bold m-0 flex-shrink-0">商品選單</h5>
                             <input type="text" class="form-control border-primary" id="productSearchInput" placeholder="🔍 快速搜尋..." oninput="filterPOSProducts()">
                         </div>
-                        <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-xl-5 g-2" id="posProductGrid"></div>
+                        <div id="posProductGrid"></div>
                     </div>
                 </div>
-                <div class="col-lg-5">
+                <div class="cashier-cart-column">
                     <div class="p-3 cart-container border h-100 d-flex flex-column">
-                        <h5 class="fw-bold text-success mb-2">點單明細</h5>
-                        <div class="flex-grow-1 bg-light rounded border p-2 mb-2" style="max-height: 45vh; overflow-y: auto;">
+                        <div class="d-flex justify-content-between align-items-center mb-2"><h5 class="fw-bold text-success mb-0">點單明細</h5><button class="btn btn-sm btn-outline-secondary mobile-cart-close" onclick="closeMobileCart()">收起 ↓</button></div>
+                        <div class="flex-grow-1 bg-light rounded border p-2 mb-2 cart-scroll-area">
                             <div id="cartList" class="d-flex flex-column gap-2"></div>
                         </div>
                         <div class="d-flex justify-content-between align-items-center mb-2 border-top pt-2"><span class="fs-5 fw-bold">總金額：</span><span class="fs-2 fw-extrabold text-danger" id="cartTotal">$0</span></div>
@@ -159,6 +216,11 @@
                     </div>
                 </div>
             </div>
+            <div class="mobile-cart-backdrop" onclick="closeMobileCart()"></div>
+            <button type="button" class="mobile-cart-bar bg-dark text-white" onclick="openMobileCart()">
+                <span class="fw-bold">🛒 購物車 <span id="mobileCartCount" class="badge bg-pink ms-1">0</span></span>
+                <span class="fw-bold">合計 <span id="mobileCartTotal" class="text-warning fs-5">$0</span>　查看結帳 ↑</span>
+            </button>
         </div>
 
         <!-- 🧾 歷史單據 -->
@@ -216,7 +278,7 @@
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <h5 class="fw-bold text-dark m-0">🚛 歷史進貨紀錄表</h5>
                             <div class="d-flex gap-2">
-                                <button class="btn btn-outline-danger btn-sm fw-bold shadow-sm" id="trashBinToggleBtn" onclick="toggleTrashBin()">🗑️ 垃圾桶 (已作廢)</button>
+                                <button class="btn btn-outline-danger btn-sm fw-bold shadow-sm" id="trashBinToggleBtn" onclick="toggleTrashBin()">⛔ 已作廢紀錄</button>
                                 <button class="btn btn-outline-secondary btn-sm fw-bold shadow-sm" onclick="loadRestockLogs()">🔄 重新整理</button>
                             </div>
                         </div>
@@ -246,12 +308,12 @@
                             <input type="checkbox" class="form-check-input ms-2 border-secondary" id="selectAllTrash" onchange="toggleSelectAll('trash')" style="transform: scale(1.3);">
                             <label class="form-check-label fw-bold small text-white" for="selectAllTrash">全選單據</label>
                             <button class="btn btn-success btn-sm fw-bold ms-3 shadow-sm" onclick="bulkAction('recover')">♻️ 批量復原</button>
-                            <button class="btn btn-danger btn-sm fw-bold ms-1 shadow-sm" onclick="bulkAction('hard_delete')">🔥 永久刪除</button>
+                            <span class="small text-white-50 ms-2">作廢紀錄永久保留</span>
                         </div>
 
                         <div class="table-responsive">
                             <table class="table table-hover align-middle table-rwd" style="min-width: 100%;">
-                                <thead class="table-dark"><tr><th style="width: 40px;"></th><th>進貨單號</th><th>入庫時間</th><th>操作人員</th><th>入庫明細</th><th>操作</th></tr></thead>
+                                <thead class="table-dark"><tr><th style="width: 40px;"></th><th>進貨單號</th><th>入庫時間</th><th>建立人</th><th>入庫明細</th><th>稽核紀錄</th><th>操作</th></tr></thead>
                                 <tbody id="restockLogsBody"></tbody>
                             </table>
                         </div>
@@ -294,7 +356,7 @@
                 <div class="row row-cols-2 row-cols-md-3 g-2 mb-3 justify-content-center">
                     <div class="col"><div class="stat-box rounded shadow-sm"><div class="box-title">💰 營業收入</div><div class="fs-5 fw-bold p-2 text-primary">$<span id="repRevenue">0</span></div></div></div>
                     <div class="col manager-only"><div class="stat-box rounded shadow-sm"><div class="box-title" style="background-color:#adb5bd;">📉 總計成本</div><div class="fs-5 fw-bold p-2 text-warning">$<span id="repCost">0</span></div></div></div>
-                    <div class="col manager-only"><div class="stat-box rounded shadow-sm"><div class="box-title" style="background-color:#adb5bd;">🎪 租金支出</div><div class="fs-5 fw-bold p-2" style="color:#6f42c1;">$<span id="repRent">0</span></div></div></div>
+                    <div class="col manager-only"><div class="stat-box rounded shadow-sm"><div class="box-title" style="background-color:#adb5bd;">💸 費用支出</div><div class="fs-5 fw-bold p-2" style="color:#6f42c1;">$<span id="repRent">0</span></div></div></div>
                     <div class="col manager-only"><div class="stat-box rounded shadow-sm"><div class="box-title">🏆 淨利潤</div><div class="fs-5 fw-bold p-2 text-success">$<span id="repProfit">0</span></div></div></div>
                     <div class="col"><div class="stat-box rounded shadow-sm border-success"><div class="box-title bg-success">📦 總銷量</div><div class="fs-5 fw-bold p-2 text-success"><span id="repFilmCount">0</span> 件</div></div></div>
                     <div class="col"><div class="stat-box rounded shadow-sm border-info"><div class="box-title bg-info text-dark">👤 今日值班</div><div class="fs-6 fw-bold p-2 text-dark text-wrap" id="repPartners">無</div></div></div>
@@ -457,6 +519,28 @@
     </div>
 </div>
 
+
+<div class="modal fade" id="editOrderModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <div><h5 class="modal-title fw-bold mb-0">✏️ 編輯歷史單據</h5><div class="small opacity-75" id="editOrderNoDisplay"></div></div>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body bg-light">
+                <input type="hidden" id="editOrderId">
+                <div class="row g-2 align-items-end mb-3">
+                    <div class="col-12 col-md-6"><label class="form-label fw-bold small">付款方式</label><select id="editOrderPaymentMethod" class="form-select fw-bold"></select></div>
+                    <div class="col-12 col-md-6 text-md-end"><button class="btn btn-outline-primary fw-bold" onclick="addOrderEditRow()">＋ 新增品項</button></div>
+                </div>
+                <div id="editOrderItemsContainer" class="d-flex flex-column gap-2"></div>
+                <div class="mt-3 p-2 bg-white border rounded d-flex justify-content-between"><span class="fw-bold">修改後總額</span><span id="editOrderTotal" class="fw-bold text-danger fs-5">$0</span></div>
+            </div>
+            <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-success fw-bold px-4" onclick="submitOrderEdit()">💾 儲存修改</button></div>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="exportResultModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -515,6 +599,11 @@
             <div style="border-top: 2px solid #1e3a8a; margin: 25px 0; opacity: 0.6;"></div>
             <div class="hw-row hw-blue fw-bold pe-2"><div>品項</div><div>金額</div></div>
             <div id="hwDetailsList" class="pe-2"></div>
+            <div id="hwExpenseSection" style="display:none;">
+                <div style="border-top: 2px dashed #b91c1c; margin: 22px 0 12px; opacity: .7;"></div>
+                <div class="hw-row hw-blue fw-bold pe-2"><div>費用支出</div><div>金額</div></div>
+                <div id="hwExpenseList" class="pe-2"></div>
+            </div>
             <div style="border-top: 2px solid #1e3a8a; margin: 25px 0; opacity: 0.6;"></div>
             <div class="hw-row pe-2 align-items-center">
                 <div class="hw-blue fw-bold">總計：</div><div class="hw-red fw-bold" id="hwTotalRevenue" style="font-size: 1.5rem; border-bottom: 3px double #b91c1c; padding-bottom: 2px;">$ 0</div>
@@ -554,8 +643,9 @@
  
     let allProducts = [], cart = [], currentSubItems = [];
     let restockCart = []; 
-    let batchHistoryRaw = []; 
-    let managerAuthModalObj, partnerModalObj, subItemBootstrapModal, rentModalObj, productEditModalObj, restockMatrixModalObj, editBatchModalObj, exportResultModalObj, settingsModalObj;
+    let batchHistoryRaw = [];
+    let ordersHistoryRaw = [], editOrderRows = []; 
+    let managerAuthModalObj, partnerModalObj, subItemBootstrapModal, rentModalObj, productEditModalObj, restockMatrixModalObj, editBatchModalObj, editOrderModalObj, exportResultModalObj, settingsModalObj;
 
 
     function localDateString(date = new Date()) {
@@ -613,8 +703,10 @@
         productEditModalObj = new bootstrap.Modal(document.getElementById('productEditModal'));
         restockMatrixModalObj = new bootstrap.Modal(document.getElementById('restockMatrixModal'));
         editBatchModalObj = new bootstrap.Modal(document.getElementById('editRestockBatchModal'));
+        editOrderModalObj = new bootstrap.Modal(document.getElementById('editOrderModal'));
         exportResultModalObj = new bootstrap.Modal(document.getElementById('exportResultModal'));
         settingsModalObj = new bootstrap.Modal(document.getElementById('settingsModal'));
+        document.querySelectorAll('#posTabs button[data-bs-toggle="tab"]').forEach(tab => tab.addEventListener('shown.bs.tab', closeMobileCart));
 
         const setupRes = await originalFetch('/api/setup/status', {headers:{'Cache-Control':'no-cache'}});
         const setup = await setupRes.json();
@@ -828,16 +920,36 @@
     function populateRestockSelect() { const sel = document.getElementById('quickRestockSelect'); sel.innerHTML = '<option value="">＋ 點此選擇商品加入進貨單...</option>'; allProducts.filter(p => p.track_stock).forEach(p => { const opt=document.createElement('option'); opt.value=p.id; opt.textContent=p.name; sel.appendChild(opt); }); }
     function filterPOSProducts() { const k = document.getElementById('productSearchInput').value.toLowerCase(); renderPOSGrid(allProducts.filter(p => p.name.toLowerCase().includes(k))); }
     function renderPOSGrid(products) {
-        const grid = document.getElementById('posProductGrid'); grid.innerHTML = '';
+        const grid = document.getElementById('posProductGrid');
+        grid.innerHTML = '';
+        grid.classList.remove('grid-roomy', 'grid-compact');
+        if (products.length <= 6) grid.classList.add('grid-roomy');
+        else if (products.length >= 16) grid.classList.add('grid-compact');
         products.forEach(p => {
-            const col = document.createElement('div'); col.className='col';
-            const card = document.createElement('div'); card.className='card product-card shadow-sm'; card.onclick=()=>addToCart(p.id);
-            const body = document.createElement('div'); body.className='card-body p-2 d-flex flex-column justify-content-between';
-            const title = document.createElement('h6'); title.className='fw-bold text-dark mb-1'; title.style.fontSize='0.9rem'; title.textContent=p.name;
+            const card = document.createElement('div');
+            card.className='card product-card shadow-sm';
+            card.onclick=()=>addToCart(p.id);
+            const body = document.createElement('div'); body.className='card-body d-flex flex-column justify-content-between';
+            const title = document.createElement('h6'); title.className='fw-bold text-dark mb-2 lh-sm'; title.textContent=p.name;
+            const footer = document.createElement('div'); footer.className='d-flex justify-content-between align-items-end gap-1';
+            const stock = document.createElement('small'); stock.className='text-secondary';
+            stock.textContent = p.track_stock ? `庫存 ${p.stock}` : '免庫存';
             const price = document.createElement('div'); price.className='text-end text-danger fw-extrabold'; price.textContent = p.price_mode === 'custom' ? '自訂金額' : `$${p.price}`;
-            body.append(title, price); card.appendChild(body); col.appendChild(card); grid.appendChild(col);
+            footer.append(stock, price); body.append(title, footer); card.appendChild(body); grid.appendChild(card);
         });
     }
+
+    function updateMobileCartSummary() {
+        const count = cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+        const total = cart.reduce((sum, item) => sum + Number(item.price_at_sale || 0) * Number(item.quantity || 0), 0);
+        const countEl = document.getElementById('mobileCartCount');
+        const totalEl = document.getElementById('mobileCartTotal');
+        if (countEl) countEl.textContent = count;
+        if (totalEl) totalEl.textContent = '$' + total;
+    }
+
+    function openMobileCart() { document.body.classList.add('mobile-cart-open'); }
+    function closeMobileCart() { document.body.classList.remove('mobile-cart-open'); }
 
     function addToCart(productId) {
         const product = allProducts.find(p => p.id === productId);
@@ -889,7 +1001,7 @@
                 ${inputHtml}
             </div>`;
         });
-        document.getElementById('cartTotal').innerText = '$' + total; calculatePOSChange();
+        document.getElementById('cartTotal').innerText = '$' + total; updateMobileCartSummary(); calculatePOSChange();
     }
     
     function showSmartDropdown(index, pid) { const dropdown = document.getElementById(`smartDropdown-${index}`); const inputVal = dropdown.previousElementSibling.value.toLowerCase(); renderSmartOptions(index, pid, inputVal); dropdown.style.display = 'block'; }
@@ -922,23 +1034,91 @@
         const orderDate = document.getElementById('checkoutDateInput').value;
         const res = await fetch('/api/orders', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ date: orderDate, payment_method: document.getElementById('paymentMethodSelect').value, items }) });
         
-        if(res.ok) { alert("🎉 結帳成功！"); cart = []; document.getElementById('receivedAmount').value = ''; renderCart(); loadProducts(); loadReport(); } else { const r = await res.json(); alert(r.message || "結帳失敗"); }
+        if(res.ok) { alert("🎉 結帳成功！"); cart = []; document.getElementById('receivedAmount').value = ''; renderCart(); closeMobileCart(); loadProducts(); loadReport(); } else { const r = await res.json(); alert(r.message || "結帳失敗"); }
         btn.disabled = false; btn.innerText = "確認結帳";
     }
 
     async function loadOrders() {
         const date = document.getElementById('orderDateFilter').value || localDateString(); document.getElementById('orderDateFilter').value = date;
         const res = await fetch(`/api/orders?date=${date}`); if(!res.ok) return; const data = await res.json();
+        ordersHistoryRaw = data;
         const tbody = document.getElementById('ordersTableBody'); tbody.innerHTML = '';
         data.forEach(o => {
             const tr = document.createElement('tr'); if(o.is_void) tr.className='table-secondary opacity-75';
             const items = o.items.map(i => `▪ ${escapeHTML(i.name)} x${i.quantity}`).join('<br>');
-            const status = o.is_void ? `<div class="small text-danger fw-bold">已作廢${o.voided_by ? `・${escapeHTML(o.voided_by)}` : ''}</div>` : '';
-            const action = o.is_void ? '<span class="badge bg-secondary">已作廢</span>' : `<button class="btn btn-sm btn-outline-warning py-0 me-1 manager-only" onclick="changeOrderDate(${o.id}, '${o.sale_date}')">✏️ 改日期</button><button class="btn btn-sm btn-outline-danger py-0 manager-only" onclick="deleteOrder(${o.id})">作廢</button>`;
-            tr.innerHTML = `<td data-label="單號" class="fw-bold text-primary">${escapeHTML(o.invoice_no)}</td><td data-label="夥伴"><span class="badge bg-pink">${escapeHTML(o.partner_name || '未指定')}</span></td><td data-label="時間" class="small text-secondary">${escapeHTML(o.created_at)}${status}</td><td data-label="明細" class="text-start">${items}</td><td data-label="方式"><span class="badge bg-light text-dark border">${escapeHTML(o.payment_method)}</span></td><td data-label="總額" class="fw-bold text-danger">$${o.total_amount}</td><td data-label="操作">${action}</td>`;
+            let audit = '';
+            if (o.edited_by) audit += `<div class="audit-note text-primary fw-bold">✏️ 最後編輯：${escapeHTML(o.edited_by)}・${escapeHTML(o.edited_at || '')}${o.edit_count ? `・共 ${o.edit_count} 次` : ''}</div>`;
+            if (o.is_void) audit += `<div class="audit-note text-danger fw-bold">⛔ 作廢：${escapeHTML(o.voided_by || '未知')}・${escapeHTML(o.voided_at || '')}</div>`;
+            const action = o.is_void ? '<span class="badge bg-secondary">已作廢</span>' : `<div class="d-flex flex-wrap gap-1"><button class="btn btn-sm btn-outline-primary py-0 manager-only" onclick="openOrderEdit(${o.id})">✏️ 編輯</button><button class="btn btn-sm btn-outline-warning py-0 manager-only" onclick="changeOrderDate(${o.id}, '${o.sale_date}')">📅 改日期</button><button class="btn btn-sm btn-outline-danger py-0 manager-only" onclick="deleteOrder(${o.id})">⛔ 作廢</button></div>`;
+            tr.innerHTML = `<td data-label="單號" class="fw-bold text-primary">${escapeHTML(o.invoice_no)}</td><td data-label="夥伴"><span class="badge bg-pink">${escapeHTML(o.partner_name || '未指定')}</span></td><td data-label="時間" class="small text-secondary">${escapeHTML(o.created_at)}${audit}</td><td data-label="明細" class="text-start">${items}</td><td data-label="方式"><span class="badge bg-light text-dark border">${escapeHTML(o.payment_method)}</span></td><td data-label="總額" class="fw-bold text-danger">$${o.total_amount}</td><td data-label="操作">${action}</td>`;
             tbody.appendChild(tr);
         });
         updateManagerUI();
+    }
+
+    function orderEditProductOptions(selectedId) {
+        return allProducts.map(p => `<option value="${p.id}" ${Number(p.id)===Number(selectedId)?'selected':''}>${escapeHTML(p.name)}</option>`).join('');
+    }
+
+    function renderOrderEditRows() {
+        const container = document.getElementById('editOrderItemsContainer'); container.innerHTML = '';
+        editOrderRows.forEach((row, index) => {
+            const p = allProducts.find(x => Number(x.id) === Number(row.product_id));
+            const variants = (p && p.variants) ? p.variants : [];
+            const wrap = document.createElement('div'); wrap.className='order-edit-row';
+            const variantOptions = variants.length
+                ? `<select class="form-select form-select-sm edit-order-variant" onchange="updateOrderEditVariant(${index}, this.value)"><option value="">選擇型號</option>${variants.map(v=>`<option value="${v.id}" ${Number(v.id)===Number(row.variant_id)?'selected':''}>${escapeHTML(v.name)}（庫存 ${v.stock}）</option>`).join('')}</select>`
+                : `<select class="form-select form-select-sm" disabled><option>此商品無型號</option></select>`;
+            wrap.innerHTML = `<div class="row g-2 align-items-end"><div class="col-12 col-md-4"><label class="form-label small fw-bold mb-1">商品</label><select class="form-select form-select-sm" onchange="changeOrderEditProduct(${index}, this.value)">${orderEditProductOptions(row.product_id)}</select></div><div class="col-12 col-md-3"><label class="form-label small fw-bold mb-1">型號</label>${variantOptions}</div><div class="col-4 col-md-2"><label class="form-label small fw-bold mb-1">數量</label><input type="number" min="1" class="form-control form-control-sm text-center fw-bold" value="${row.quantity}" oninput="editOrderRows[${index}].quantity=Math.max(1,parseInt(this.value)||1); updateOrderEditTotal()"></div><div class="col-5 col-md-2"><label class="form-label small fw-bold mb-1">單價</label><input type="number" min="0" class="form-control form-control-sm text-center fw-bold text-danger" value="${row.price_at_sale}" oninput="editOrderRows[${index}].price_at_sale=Math.max(0,parseFloat(this.value)||0); updateOrderEditTotal()"></div><div class="col-3 col-md-1"><button class="btn btn-outline-danger btn-sm w-100" onclick="removeOrderEditRow(${index})">×</button></div></div>`;
+            container.appendChild(wrap);
+        });
+        updateOrderEditTotal();
+    }
+
+    function updateOrderEditTotal() {
+        const total = editOrderRows.reduce((sum, r) => sum + Number(r.quantity||0) * Number(r.price_at_sale||0), 0);
+        document.getElementById('editOrderTotal').textContent = '$' + total;
+    }
+
+    function changeOrderEditProduct(index, productId) {
+        const p = allProducts.find(x => Number(x.id) === Number(productId)); if(!p) return;
+        editOrderRows[index].product_id = p.id; editOrderRows[index].variant_id = null;
+        editOrderRows[index].price_at_sale = p.price_mode === 'custom' ? 0 : Number(p.price || 0);
+        renderOrderEditRows();
+    }
+
+    function updateOrderEditVariant(index, variantId) { editOrderRows[index].variant_id = variantId ? Number(variantId) : null; }
+    function removeOrderEditRow(index) { editOrderRows.splice(index,1); renderOrderEditRows(); }
+    function addOrderEditRow() {
+        const p = allProducts[0]; if(!p) return;
+        editOrderRows.push({product_id:p.id, variant_id:null, quantity:1, price_at_sale:p.price_mode==='custom'?0:Number(p.price||0)});
+        renderOrderEditRows();
+    }
+
+    async function openOrderEdit(id) {
+        if(!isManagerUnlocked) { alert('🔒 請先解鎖主管模式！'); return; }
+        const order = ordersHistoryRaw.find(o => Number(o.id) === Number(id)); if(!order || order.is_void) return;
+        if(!allProducts.length) await loadProducts();
+        document.getElementById('editOrderId').value = order.id;
+        document.getElementById('editOrderNoDisplay').textContent = `${order.invoice_no}｜原始建立：${order.partner_name || '未指定'} ${order.created_at || ''}`;
+        const pmRes = await fetch('/api/payment_methods'); const methods = await pmRes.json();
+        const pm = document.getElementById('editOrderPaymentMethod'); pm.innerHTML='';
+        methods.forEach(m=>{ const opt=document.createElement('option'); opt.value=m.name; opt.textContent=m.name; if(m.name===order.payment_method) opt.selected=true; pm.appendChild(opt); });
+        editOrderRows = order.items.map(i => ({product_id:Number(i.product_id), variant_id:i.variant_id?Number(i.variant_id):null, quantity:Number(i.quantity), price_at_sale:Number(i.price_at_sale)}));
+        renderOrderEditRows(); editOrderModalObj.show();
+    }
+
+    async function submitOrderEdit() {
+        if(editOrderRows.length===0) { alert('至少保留一個品項；若整單不要請使用作廢。'); return; }
+        for(const row of editOrderRows) {
+            const p=allProducts.find(x=>Number(x.id)===Number(row.product_id));
+            if(p && p.track_stock && p.variants && p.variants.length && !row.variant_id) { alert(`【${p.name}】請選擇型號`); return; }
+        }
+        const payload={order_id:Number(document.getElementById('editOrderId').value), payment_method:document.getElementById('editOrderPaymentMethod').value, items:editOrderRows};
+        const res=await fetch('/api/orders/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); const data=await res.json();
+        if(!res.ok) { alert(data.message||'修改失敗'); return; }
+        editOrderModalObj.hide(); alert('✅ 單據已更新，庫存與報表已重新計算。');
+        await loadProducts(); loadInventory(); loadOrders(); loadReport();
     }
 
     async function changeOrderDate(id, oldDate) {
@@ -1106,7 +1286,7 @@
             btn.innerHTML = "🔙 返回正常紀錄"; btn.classList.replace('btn-outline-danger', 'btn-danger');
             document.getElementById('activeActionBar').classList.add('d-none'); document.getElementById('trashActionBar').classList.remove('d-none');
         } else {
-            btn.innerHTML = "🗑️ 垃圾桶 (已作廢)"; btn.classList.replace('btn-danger', 'btn-outline-danger');
+            btn.innerHTML = "⛔ 已作廢紀錄"; btn.classList.replace('btn-danger', 'btn-outline-danger');
             document.getElementById('activeActionBar').classList.remove('d-none'); document.getElementById('trashActionBar').classList.add('d-none');
         }
         loadRestockLogs();
@@ -1128,26 +1308,30 @@
         if(!isManagerUnlocked) return; 
         const mode = document.getElementById('restockModeSelect').value; let date = '';
         if(mode === 'daily') date = document.getElementById('restockDateInput').value; else if(mode === 'monthly') date = document.getElementById('restockMonthInput').value; else date = document.getElementById('restockYearInput').value;
-        
         const res = await fetch(`/api/restock?mode=${mode}&date=${date}&trash=${isShowingTrash ? 1 : 0}`); 
         const data = await res.json(); batchHistoryRaw = data; 
         const tbody = document.getElementById('restockLogsBody'); tbody.innerHTML = '';
-        
-        if (data.length === 0) { tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-4">目前沒有紀錄</td></tr>`; return; }
+        if (data.length === 0) { tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">目前沒有紀錄</td></tr>`; return; }
 
         data.forEach(log => { 
-            const itemsHtml = log.items.map(i => `<div class="small fw-bold">▪ ${i.name} <span class="text-success">＋${i.quantity}</span></div>`).join('');
-            let actionHtml = '';
-            if (isShowingTrash) { actionHtml = `<button class="btn btn-sm btn-success py-0 me-1 fw-bold shadow-sm" onclick="singleAction('recover', '${log.batch_no}')">♻️ 復原</button><button class="btn btn-sm btn-danger py-0 fw-bold shadow-sm" onclick="singleAction('hard_delete', '${log.batch_no}')">🔥 刪除</button>`; } 
-            else { actionHtml = `<button class="btn btn-sm btn-outline-primary py-0 me-1 fw-bold" onclick="openEditBatchModal('${log.batch_no}')">✏️ 編輯</button><button class="btn btn-sm btn-outline-danger py-0 fw-bold" onclick="singleAction('trash', '${log.batch_no}')">❌ 作廢</button>`; }
+            const itemsHtml = log.items.map(i => `<div class="small fw-bold">▪ ${escapeHTML(i.name)} <span class="text-success">＋${i.quantity}</span></div>`).join('');
+            let auditHtml = '<span class="text-muted small">無異動</span>';
+            const notes=[];
+            if(log.edited_by) notes.push(`<div class="audit-note text-primary fw-bold">✏️ 編輯：${escapeHTML(log.edited_by)}・${escapeHTML(log.edited_at||'')}</div>`);
+            if(log.voided_by) notes.push(`<div class="audit-note text-danger fw-bold">⛔ 作廢：${escapeHTML(log.voided_by)}・${escapeHTML(log.voided_at||'')}</div>`);
+            if(log.restored_by) notes.push(`<div class="audit-note text-success fw-bold">♻️ 復原：${escapeHTML(log.restored_by)}・${escapeHTML(log.restored_at||'')}</div>`);
+            if(notes.length) auditHtml=notes.join('');
+            const actionHtml = isShowingTrash
+                ? `<button class="btn btn-sm btn-success py-0 fw-bold shadow-sm" onclick="singleAction('recover', '${log.batch_no}')">♻️ 復原</button>`
+                : `<div class="d-flex flex-wrap gap-1"><button class="btn btn-sm btn-outline-primary py-0 fw-bold" onclick="openEditBatchModal('${log.batch_no}')">✏️ 編輯</button><button class="btn btn-sm btn-outline-danger py-0 fw-bold" onclick="singleAction('trash', '${log.batch_no}')">⛔ 作廢</button></div>`;
 
-            tbody.innerHTML += `
-            <tr>
-                <td data-label="選取" style="text-align: center;"><input type="checkbox" class="form-check-input border-secondary restock-checkbox" value="${log.batch_no}" style="transform: scale(1.5);"></td>
-                <td data-label="進貨單號" class="fw-bold ${isShowingTrash ? 'text-secondary text-decoration-line-through' : 'text-success'}">${log.batch_no}</td>
-                <td data-label="時間" class="small text-secondary">${log.date}</td>
-                <td data-label="人員"><span class="badge bg-pink">${log.partner_name}</span></td>
+            tbody.innerHTML += `<tr>
+                <td data-label="選取" style="text-align:center;"><input type="checkbox" class="form-check-input border-secondary restock-checkbox" value="${escapeHTML(log.batch_no)}" style="transform:scale(1.5);"></td>
+                <td data-label="進貨單號" class="fw-bold ${isShowingTrash ? 'text-secondary text-decoration-line-through' : 'text-success'}">${escapeHTML(log.batch_no)}</td>
+                <td data-label="入庫時間" class="small text-secondary">${escapeHTML(log.date)}</td>
+                <td data-label="建立人"><span class="badge bg-pink">${escapeHTML(log.partner_name)}</span></td>
                 <td data-label="明細" class="text-start ${isShowingTrash ? 'opacity-50' : ''}">${itemsHtml}</td>
+                <td data-label="稽核紀錄">${auditHtml}</td>
                 <td data-label="操作" class="text-end">${actionHtml}</td>
             </tr>`; 
         });
@@ -1158,13 +1342,14 @@
 
     async function processBatchAction(action, batch_nos) {
         let msg = "";
-        if (action === 'trash') msg = "確定將選中的單據【作廢】放入垃圾桶？\n(這些商品庫存將會自動扣除退回)";
-        else if (action === 'recover') msg = "確定【復原】選中的作廢單據？\n(這些商品庫存將會自動加回來)";
-        else if (action === 'hard_delete') msg = "🔥 警告：永久刪除後將無法救回！確定刪除？";
+        if (action === 'trash') msg = "確定將選中的進貨單【作廢】？\n庫存會自動扣回，但紀錄與作廢人會永久保留。";
+        else if (action === 'recover') msg = "確定【復原】選中的作廢進貨單？\n庫存會自動加回，復原人也會留下紀錄。";
+        else return;
         if (!confirm(msg)) return;
         try {
-            const res = await fetch('/api/restock/batch_action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: action, batch_nos: batch_nos }) });
-            if (res.ok) { alert("✅ 操作成功！庫存已自動重算。"); document.getElementById('selectAllActive').checked = false; document.getElementById('selectAllTrash').checked = false; loadRestockLogs(); loadInventory(); loadProducts(); } else { const data=await res.json(); alert(data.message || "❌ 操作失敗！"); }
+            const res = await fetch('/api/restock/batch_action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, batch_nos }) });
+            if (res.ok) { alert("✅ 操作成功！庫存與稽核紀錄已更新。"); document.getElementById('selectAllActive').checked = false; document.getElementById('selectAllTrash').checked = false; loadRestockLogs(); loadInventory(); loadProducts(); }
+            else { const data=await res.json(); alert(data.message || "❌ 操作失敗！"); }
         } catch (e) { alert("連線錯誤！"); }
     }
 
@@ -1187,7 +1372,7 @@
         });
         if (items.length === 0) { alert("⚠️ 數量不能全為空，如果不要這單請直接使用「作廢」功能"); return; }
         const res = await fetch('/api/restock/edit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ batch_no: batch_no, items: items }) });
-        if(res.ok) { alert("💾 進貨單修改成功，庫存已自動重算！"); editBatchModalObj.hide(); loadRestockLogs(); loadInventory(); loadProducts(); } else { alert("修改失敗"); }
+        if(res.ok) { alert("💾 進貨單修改成功，庫存已自動重算，編輯人已留存！"); editBatchModalObj.hide(); loadRestockLogs(); loadInventory(); loadProducts(); } else { const data=await res.json(); alert(data.message || "修改失敗"); }
     }
 
     function populateCopyFromSelect() { const sel = document.getElementById('copyFromProduct'); sel.innerHTML = '<option value="">請選擇...</option>'; allProducts.forEach(p => { if(p.variants && p.variants.length > 0) sel.innerHTML += `<option value="${p.id}">${p.name}</option>`; }); }
@@ -1337,6 +1522,23 @@
             
             document.getElementById('hwTotalQty').innerText = `共計 ${totalQty} 個`;
             document.getElementById('hwDetailsList').innerHTML = detailsHtml; 
+
+            const expenses = data.expenses || {};
+            const expenseDefs = [
+                ['租金', Number(expenses.rent_base || 0)],
+                ['清潔費', Number(expenses.cleaning || 0)],
+                ['電費', Number(expenses.electricity || 0)],
+                ['其他', Number(expenses.other || 0)]
+            ].filter(x => x[1] > 0);
+            const expenseSection = document.getElementById('hwExpenseSection');
+            const expenseList = document.getElementById('hwExpenseList');
+            if (expenseDefs.length) {
+                expenseList.innerHTML = expenseDefs.map(([label, amount]) => `<div class="hw-row"><div class="hw-blue">· ${label}</div><div class="hw-red fw-bold">$${amount}</div></div>`).join('');
+                expenseSection.style.display = 'block';
+            } else {
+                expenseList.innerHTML = '';
+                expenseSection.style.display = 'none';
+            }
             
             let statsHtml = ''; 
             for(let key in statsCount) { 

@@ -156,7 +156,10 @@ def init_db():
                 partner_name TEXT DEFAULT '',
                 is_void INTEGER NOT NULL DEFAULT 0,
                 voided_at TEXT DEFAULT NULL,
-                voided_by TEXT DEFAULT NULL
+                voided_by TEXT DEFAULT NULL,
+                edited_at TEXT DEFAULT NULL,
+                edited_by TEXT DEFAULT NULL,
+                edit_count INTEGER NOT NULL DEFAULT 0
             )
         """)
         cursor.execute("""
@@ -201,7 +204,13 @@ def init_db():
                 product_name TEXT NOT NULL,
                 quantity INTEGER NOT NULL,
                 cost REAL NOT NULL DEFAULT 0,
-                is_deleted INTEGER DEFAULT 0
+                is_deleted INTEGER DEFAULT 0,
+                voided_at TEXT DEFAULT NULL,
+                voided_by TEXT DEFAULT NULL,
+                restored_at TEXT DEFAULT NULL,
+                restored_by TEXT DEFAULT NULL,
+                edited_at TEXT DEFAULT NULL,
+                edited_by TEXT DEFAULT NULL
             )
         """)
 
@@ -222,6 +231,24 @@ def init_db():
             cursor.execute("ALTER TABLE orders ADD COLUMN voided_at TEXT DEFAULT NULL")
         if "voided_by" not in order_cols:
             cursor.execute("ALTER TABLE orders ADD COLUMN voided_by TEXT DEFAULT NULL")
+        if "edited_at" not in order_cols:
+            cursor.execute("ALTER TABLE orders ADD COLUMN edited_at TEXT DEFAULT NULL")
+        if "edited_by" not in order_cols:
+            cursor.execute("ALTER TABLE orders ADD COLUMN edited_by TEXT DEFAULT NULL")
+        if "edit_count" not in order_cols:
+            cursor.execute("ALTER TABLE orders ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0")
+
+        restock_cols = {r[1] for r in cursor.execute("PRAGMA table_info(restock_logs)").fetchall()}
+        for col, ddl in {
+            "voided_at": "ALTER TABLE restock_logs ADD COLUMN voided_at TEXT DEFAULT NULL",
+            "voided_by": "ALTER TABLE restock_logs ADD COLUMN voided_by TEXT DEFAULT NULL",
+            "restored_at": "ALTER TABLE restock_logs ADD COLUMN restored_at TEXT DEFAULT NULL",
+            "restored_by": "ALTER TABLE restock_logs ADD COLUMN restored_by TEXT DEFAULT NULL",
+            "edited_at": "ALTER TABLE restock_logs ADD COLUMN edited_at TEXT DEFAULT NULL",
+            "edited_by": "ALTER TABLE restock_logs ADD COLUMN edited_by TEXT DEFAULT NULL",
+        }.items():
+            if col not in restock_cols:
+                cursor.execute(ddl)
 
         item_cols = {r[1] for r in cursor.execute("PRAGMA table_info(order_items)").fetchall()}
         if "track_stock_at_sale" not in item_cols:
@@ -742,6 +769,13 @@ def handle_restock():
                     "batch_no": b_no,
                     "date": row["date"],
                     "partner_name": row["partner_name"],
+                    "is_deleted": bool(row["is_deleted"]),
+                    "voided_at": row["voided_at"],
+                    "voided_by": row["voided_by"],
+                    "restored_at": row["restored_at"],
+                    "restored_by": row["restored_by"],
+                    "edited_at": row["edited_at"],
+                    "edited_by": row["edited_by"],
                     "items": [],
                 })
                 grouped[b_no]["items"].append({
@@ -810,15 +844,32 @@ def _batch_rows(cursor, batch_no):
     return cursor.execute("SELECT * FROM restock_logs WHERE batch_no=?", (batch_no,)).fetchall()
 
 
-def _set_batch_deleted(cursor, batch_no, value):
+def _set_restock_audit(cursor, batch_no, *, deleted=None, voided_at=None, voided_by=None, restored_at=None, restored_by=None):
+    sets, values = [], []
+    fields = {
+        "is_deleted": deleted,
+        "voided_at": voided_at,
+        "voided_by": voided_by,
+        "restored_at": restored_at,
+        "restored_by": restored_by,
+    }
+    for key, value in fields.items():
+        if value is not None:
+            sets.append(f"{key}=?")
+            values.append(value)
+    if not sets:
+        return
     if batch_no.startswith("OLD-"):
         log_id = int(batch_no.split("-", 1)[1])
-        cursor.execute("UPDATE restock_logs SET is_deleted=? WHERE id=?", (value, log_id))
+        values.append(log_id)
+        cursor.execute(f"UPDATE restock_logs SET {', '.join(sets)} WHERE id=?", values)
     else:
-        cursor.execute("UPDATE restock_logs SET is_deleted=? WHERE batch_no=?", (value, batch_no))
+        values.append(batch_no)
+        cursor.execute(f"UPDATE restock_logs SET {', '.join(sets)} WHERE batch_no=?", values)
 
 
-def _hard_delete_batch(cursor, batch_no):
+def _delete_batch_rows_for_rebuild(cursor, batch_no):
+    """Internal-only replacement step for editing an active restock batch."""
     if batch_no.startswith("OLD-"):
         log_id = int(batch_no.split("-", 1)[1])
         cursor.execute("DELETE FROM restock_logs WHERE id=?", (log_id,))
@@ -830,12 +881,14 @@ def _restock_action(conn, batch_nos, action):
     cursor = conn.cursor()
     conn.execute("BEGIN IMMEDIATE")
     try:
+        actor = session.get("partner_name", "未知")
+        now_str = now_tw().strftime("%Y-%m-%d %H:%M:%S")
         for batch_no in batch_nos:
             rows = _batch_rows(cursor, batch_no)
             if not rows:
                 continue
-            current_deleted = rows[0]["is_deleted"]
-            if action == "trash" and current_deleted == 0:
+            current_deleted = bool(rows[0]["is_deleted"])
+            if action == "trash" and not current_deleted:
                 for row in rows:
                     pid, vid, qty = row["product_id"], row["variant_id"], row["quantity"]
                     if not ensure_stock_can_remove(cursor, pid, vid, qty):
@@ -843,16 +896,20 @@ def _restock_action(conn, batch_nos, action):
                     if vid:
                         cursor.execute("UPDATE product_variants SET stock=stock-? WHERE id=?", (qty, vid))
                     cursor.execute("UPDATE products SET stock=stock-? WHERE id=?", (qty, pid))
-                _set_batch_deleted(cursor, batch_no, 1)
-            elif action == "recover" and current_deleted == 1:
+                _set_restock_audit(
+                    cursor, batch_no,
+                    deleted=1, voided_at=now_str, voided_by=actor,
+                )
+            elif action == "recover" and current_deleted:
                 for row in rows:
                     pid, vid, qty = row["product_id"], row["variant_id"], row["quantity"]
                     if vid:
                         cursor.execute("UPDATE product_variants SET stock=stock+? WHERE id=?", (qty, vid))
                     cursor.execute("UPDATE products SET stock=stock+? WHERE id=?", (qty, pid))
-                _set_batch_deleted(cursor, batch_no, 0)
-            elif action == "hard_delete" and current_deleted == 1:
-                _hard_delete_batch(cursor, batch_no)
+                _set_restock_audit(
+                    cursor, batch_no,
+                    deleted=0, restored_at=now_str, restored_by=actor,
+                )
         conn.commit()
         return jsonify({"status": "success"})
     except ValueError as e:
@@ -871,8 +928,8 @@ def restock_batch_action():
         return denied
     data = request.get_json() or {}
     action = data.get("action")
-    if action not in {"trash", "recover", "hard_delete"}:
-        return jsonify({"message": "無效操作"}), 400
+    if action not in {"trash", "recover"}:
+        return jsonify({"message": "進貨紀錄只允許作廢或復原，不提供永久刪除"}), 400
     batch_nos = data.get("batch_nos", [])
     if not batch_nos:
         return jsonify({"message": "未選擇單號"}), 400
@@ -894,6 +951,9 @@ def edit_restock_batch():
     new_items = data.get("items", [])
     if not batch_no:
         return jsonify({"message": "缺少單號"}), 400
+    if not new_items:
+        return jsonify({"message": "進貨單至少要保留一個品項"}), 400
+
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -903,6 +963,7 @@ def edit_restock_batch():
             conn.rollback()
             return jsonify({"message": "找不到可編輯的進貨單"}), 404
 
+        # 先把舊進貨量從現有庫存扣回，再重建同一張進貨單。
         for row in old_rows:
             if not ensure_stock_can_remove(cursor, row["product_id"], row["variant_id"], row["quantity"]):
                 conn.rollback()
@@ -911,11 +972,17 @@ def edit_restock_batch():
                 cursor.execute("UPDATE product_variants SET stock=stock-? WHERE id=?", (row["quantity"], row["variant_id"]))
             cursor.execute("UPDATE products SET stock=stock-? WHERE id=?", (row["quantity"], row["product_id"]))
 
-        _hard_delete_batch(cursor, batch_no)
+        first = old_rows[0]
+        created_at = first["date"]
+        created_by = first["partner_name"]
+        voided_at, voided_by = first["voided_at"], first["voided_by"]
+        restored_at, restored_by = first["restored_at"], first["restored_by"]
+        _delete_batch_rows_for_rebuild(cursor, batch_no)
         if batch_no.startswith("OLD-"):
             batch_no = f"IN-{now_tw().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(2).upper()}"
-        now_str = now_tw().strftime("%Y-%m-%d %H:%M:%S")
-        partner = session.get("partner_name", "未知")
+        edited_at = now_tw().strftime("%Y-%m-%d %H:%M:%S")
+        edited_by = session.get("partner_name", "未知")
+        inserted = 0
 
         for item in new_items:
             pid = int(item.get("product_id") or 0)
@@ -936,12 +1003,26 @@ def edit_restock_batch():
                 cursor.execute("UPDATE product_variants SET stock=stock+? WHERE id=?", (qty, vid))
                 full_name = f"{p['name']} ({v['name']})"
             cursor.execute("UPDATE products SET stock=stock+? WHERE id=?", (qty, pid))
-            cursor.execute(
-                "INSERT INTO restock_logs (batch_no, date, partner_name, product_id, variant_id, product_name, quantity, cost, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
-                (batch_no, now_str, partner, pid, vid, full_name, qty, p["cost"]),
-            )
+            cursor.execute("""
+                INSERT INTO restock_logs
+                (batch_no, date, partner_name, product_id, variant_id, product_name, quantity, cost, is_deleted,
+                 voided_at, voided_by, restored_at, restored_by, edited_at, edited_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+            """, (
+                batch_no, created_at, created_by, pid, vid, full_name, qty, p["cost"],
+                voided_at, voided_by, restored_at, restored_by, edited_at, edited_by,
+            ))
+            inserted += 1
+
+        if inserted == 0:
+            conn.rollback()
+            return jsonify({"message": "沒有可儲存的進貨品項"}), 400
         conn.commit()
-        return jsonify({"status": "success"})
+        return jsonify({"status": "success", "batch_no": batch_no})
+    except (TypeError, ValueError) as e:
+        if conn.in_transaction:
+            conn.rollback()
+        return jsonify({"message": str(e)}), 400
     except Exception:
         if conn.in_transaction:
             conn.rollback()
@@ -998,7 +1079,8 @@ def handle_orders():
             date_str = request.args.get("date") or today_tw()
             orders = cursor.execute("""
                 SELECT id, date AS sale_date, created_at, payment_method,
-                       total_revenue AS total_amount, partner_name, is_void, voided_at, voided_by
+                       total_revenue AS total_amount, partner_name, is_void, voided_at, voided_by,
+                       edited_at, edited_by, edit_count
                 FROM orders WHERE date=? ORDER BY id DESC
             """, (date_str,)).fetchall()
             result = []
@@ -1006,7 +1088,7 @@ def handle_orders():
                 d = dict(order)
                 d["invoice_no"] = f"ORD-{order['id']:05d}"
                 d["items"] = [dict(i) for i in cursor.execute(
-                    "SELECT product_id, name, quantity, price_at_sale, cost_at_sale FROM order_items WHERE order_id=?",
+                    "SELECT product_id, name, quantity, price_at_sale, cost_at_sale, variant_id, track_stock_at_sale FROM order_items WHERE order_id=?",
                     (order["id"],),
                 ).fetchall()]
                 result.append(d)
@@ -1137,6 +1219,139 @@ def handle_orders():
         conn.close()
 
 
+@app.route("/api/orders/edit", methods=["POST"])
+@require_auth
+def edit_order():
+    denied = require_manager()
+    if denied:
+        return denied
+    data = request.get_json() or {}
+    order_id = int(data.get("order_id") or 0)
+    items = data.get("items", [])
+    payment_method = str(data.get("payment_method") or "").strip()
+    if not order_id or not items:
+        return jsonify({"message": "缺少單據或商品資料"}), 400
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        conn.execute("BEGIN IMMEDIATE")
+        order = cursor.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+        if not order:
+            conn.rollback()
+            return jsonify({"message": "找不到單據"}), 404
+        if order["is_void"]:
+            conn.rollback()
+            return jsonify({"message": "已作廢單據不可編輯"}), 409
+        if not cursor.execute("SELECT 1 FROM payment_methods WHERE name=?", (payment_method,)).fetchone():
+            conn.rollback()
+            return jsonify({"message": "付款方式不存在"}), 400
+
+        # 先把原單庫存完整退回；若新單任何一步失敗，整個交易會 rollback。
+        old_items = cursor.execute(
+            "SELECT product_id, quantity, variant_id, track_stock_at_sale FROM order_items WHERE order_id=?",
+            (order_id,),
+        ).fetchall()
+        for item in old_items:
+            if item["track_stock_at_sale"]:
+                cursor.execute("UPDATE products SET stock=stock+? WHERE id=?", (item["quantity"], item["product_id"]))
+                if item["variant_id"]:
+                    cursor.execute("UPDATE product_variants SET stock=stock+? WHERE id=?", (item["quantity"], item["variant_id"]))
+
+        normalized = []
+        total_revenue = 0.0
+        total_cost = 0.0
+        for raw in items:
+            pid = int(raw.get("product_id") or 0)
+            qty = int(raw.get("quantity") or 0)
+            price_at_sale = float(raw.get("price_at_sale") or 0)
+            if qty <= 0:
+                raise ValueError("商品數量必須大於 0")
+            if price_at_sale < 0:
+                raise ValueError("售價不可為負數")
+            prod = cursor.execute(
+                "SELECT id, name, cost, stock, track_stock FROM products WHERE id=?",
+                (pid,),
+            ).fetchone()
+            if not prod:
+                raise ValueError("找不到商品，請重新整理後再編輯")
+            vid = raw.get("variant_id")
+            vid = int(vid) if vid not in (None, "", "null") else None
+            track_stock = bool(prod["track_stock"])
+            variant_name = ""
+
+            if track_stock:
+                variant_count = cursor.execute(
+                    "SELECT COUNT(*) AS c FROM product_variants WHERE product_id=?",
+                    (pid,),
+                ).fetchone()["c"]
+                if variant_count > 0:
+                    if not vid:
+                        raise ValueError(f"【{prod['name']}】請選擇型號")
+                    v = cursor.execute(
+                        "SELECT name, stock FROM product_variants WHERE id=? AND product_id=?",
+                        (vid, pid),
+                    ).fetchone()
+                    if not v:
+                        raise ValueError(f"【{prod['name']}】找不到指定型號")
+                    updated = cursor.execute(
+                        "UPDATE product_variants SET stock=stock-? WHERE id=? AND product_id=? AND stock>=?",
+                        (qty, vid, pid, qty),
+                    )
+                    if updated.rowcount != 1:
+                        raise ValueError(f"【{prod['name']} ({v['name']})】庫存不足，剩餘 {v['stock']} 件")
+                    parent_updated = cursor.execute(
+                        "UPDATE products SET stock=stock-? WHERE id=? AND stock>=?",
+                        (qty, pid, qty),
+                    )
+                    if parent_updated.rowcount != 1:
+                        raise ValueError(f"【{prod['name']}】總庫存資料異常")
+                    variant_name = v["name"]
+                else:
+                    updated = cursor.execute(
+                        "UPDATE products SET stock=stock-? WHERE id=? AND stock>=?",
+                        (qty, pid, qty),
+                    )
+                    if updated.rowcount != 1:
+                        latest = cursor.execute("SELECT stock FROM products WHERE id=?", (pid,)).fetchone()
+                        raise ValueError(f"【{prod['name']}】庫存不足，剩餘 {latest['stock'] if latest else 0} 件")
+
+            item_name = prod["name"] + (f" ({variant_name})" if variant_name else "")
+            cost = float(prod["cost"] or 0)
+            total_revenue += price_at_sale * qty
+            total_cost += cost * qty
+            normalized.append((pid, item_name, qty, price_at_sale, cost, vid, 1 if track_stock else 0))
+
+        cursor.execute("DELETE FROM order_items WHERE order_id=?", (order_id,))
+        cursor.executemany(
+            "INSERT INTO order_items (order_id, product_id, name, quantity, price_at_sale, cost_at_sale, variant_id, track_stock_at_sale) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [(order_id, *row) for row in normalized],
+        )
+        cursor.execute(
+            """
+            UPDATE orders
+            SET payment_method=?, total_revenue=?, total_cost=?, edited_at=?, edited_by=?, edit_count=COALESCE(edit_count,0)+1
+            WHERE id=?
+            """,
+            (
+                payment_method, total_revenue, total_cost,
+                now_tw().strftime("%Y-%m-%d %H:%M:%S"), session.get("partner_name", ""), order_id,
+            ),
+        )
+        conn.commit()
+        return jsonify({"status": "success", "total_revenue": total_revenue})
+    except (TypeError, ValueError) as e:
+        if conn.in_transaction:
+            conn.rollback()
+        return jsonify({"message": str(e)}), 400
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 @app.route("/api/orders/update_date", methods=["POST"])
 @require_auth
 def update_order_date():
@@ -1152,7 +1367,10 @@ def update_order_date():
         return jsonify({"message": "日期格式錯誤"}), 400
     conn = get_db_connection()
     try:
-        conn.execute("UPDATE orders SET date=? WHERE id=?", (new_date, order_id))
+        conn.execute(
+            "UPDATE orders SET date=?, edited_at=?, edited_by=?, edit_count=COALESCE(edit_count,0)+1 WHERE id=? AND is_void=0",
+            (new_date, now_tw().strftime("%Y-%m-%d %H:%M:%S"), session.get("partner_name", ""), order_id),
+        )
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -1214,7 +1432,7 @@ def handle_report():
             (query_date,),
         ).fetchone()
         rent_row = cursor.execute(
-            f"SELECT SUM(amount) AS amount FROM rent WHERE date {op} ?",
+            f"SELECT SUM(amount) AS amount, SUM(rent_base) AS rent_base, SUM(cleaning) AS cleaning, SUM(electricity) AS electricity, SUM(other) AS other FROM rent WHERE date {op} ?",
             (query_date,),
         ).fetchone()
         details = cursor.execute(f"""
@@ -1249,10 +1467,18 @@ def handle_report():
         revenue = float(summary["rev"] or 0)
         cost = float(summary["cos"] or 0)
         rent = float(rent_row["amount"] or 0)
+        expenses = {
+            "rent_base": float(rent_row["rent_base"] or 0),
+            "cleaning": float(rent_row["cleaning"] or 0),
+            "electricity": float(rent_row["electricity"] or 0),
+            "other": float(rent_row["other"] or 0),
+            "total": rent,
+        }
         return jsonify({
             "revenue": revenue,
             "cost": cost,
             "rent": rent,
+            "expenses": expenses,
             "net_profit": revenue - cost - rent,
             "orders_count": int(summary["orders_cnt"] or 0),
             "details": [dict(r) for r in details],
