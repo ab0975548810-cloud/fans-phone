@@ -35,9 +35,6 @@
         .bg-pink { background-color: var(--pos-pink) !important; color: white; }
         .text-pink { color: var(--pos-pink) !important; }
         .btn-pink { background-color: var(--pos-pink); color: white; border: none; }
-        
-        body:not(.manager-unlocked) .manager-only { display: none !important; }
-
         .smart-dropdown-menu { display: none; position: relative; margin-top: 5px; max-height: 180px; overflow-y: auto; background-color: #fff; border: 2px solid var(--pos-pink); border-radius: 0.5rem; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .smart-dropdown-item { padding: 12px 15px; cursor: pointer; border-bottom: 1px solid #f1f3f5; font-weight: bold; color: #495057; font-size: 1.1rem; transition: 0.1s; }
         .smart-dropdown-item:active, .smart-dropdown-item:hover { background-color: var(--pos-pink); color: white; }
@@ -112,6 +109,31 @@
             .order-edit-row .form-select, .order-edit-row .form-control { min-height: 42px; }
         }
 
+
+        /* ===== V1.2 個人 PIN + 月報表 ===== */
+        .monthly-summary-card { border: 0; border-radius: 16px; box-shadow: 0 4px 14px rgba(15,23,42,.08); height: 100%; }
+        .monthly-summary-card .label { color:#64748b; font-size:.86rem; font-weight:700; }
+        .monthly-summary-card .value { font-size:1.55rem; font-weight:800; margin-top:4px; }
+        .monthly-section { border:1px solid #e2e8f0; border-radius:16px; background:#fff; overflow:hidden; }
+        .monthly-section-title { padding:12px 14px; font-weight:800; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
+        .month-bars { display:flex; align-items:flex-end; gap:5px; min-height:180px; padding:18px 8px 6px; overflow-x:auto; }
+        .month-bar-wrap { min-width:26px; flex:1; text-align:center; }
+        .month-bar { min-height:3px; border-radius:7px 7px 2px 2px; background:linear-gradient(180deg,var(--pos-pink),var(--pos-pink-dark)); }
+        .month-bar-label { font-size:.68rem; color:#64748b; margin-top:5px; white-space:nowrap; }
+        .rank-badge { width:28px; height:28px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:#f1f5f9; font-weight:800; }
+        .audit-table td { vertical-align:middle; }
+        .audit-action-badge { white-space:nowrap; }
+        #monthlyReportContent .table { margin-bottom:0; }
+        @media (max-width:767.98px) {
+            .monthly-summary-card .value { font-size:1.18rem; }
+            .monthly-summary-card { border-radius:12px; }
+            .month-bars { min-height:145px; }
+            #monthlyDailyTable thead { display:none; }
+            #monthlyDailyTable tbody tr { display:block; padding:10px; border-bottom:1px solid #e2e8f0; }
+            #monthlyDailyTable tbody td { display:flex; justify-content:space-between; border:0; padding:4px 0; }
+            #monthlyDailyTable tbody td::before { content:attr(data-label); color:#64748b; font-weight:700; }
+        }
+
     </style>
 </head>
 <body>
@@ -125,9 +147,8 @@
         </div>
         <div class="card-body p-4 bg-light" style="border-radius:0 0 16px 16px;">
             <div class="mb-3"><label class="form-label fw-bold">🏪 店家名稱</label><input id="setupStoreName" class="form-control form-control-lg fw-bold" placeholder="例如：童的配件店"></div>
-            <div class="mb-3"><label class="form-label fw-bold">🔐 主管 PIN</label><input type="password" inputmode="numeric" id="setupManagerPin" class="form-control form-control-lg fw-bold" placeholder="至少 4 碼"></div>
             <hr>
-            <div class="small text-secondary fw-bold mb-2">第一位登入人員</div>
+            <div class="small text-secondary fw-bold mb-2">第一位使用者</div>
             <div class="row g-2 mb-4">
                 <div class="col-7"><input id="setupPartnerName" class="form-control fw-bold" placeholder="名字"></div>
                 <div class="col-5"><input type="password" inputmode="numeric" id="setupPartnerPin" class="form-control fw-bold" placeholder="PIN"></div>
@@ -161,9 +182,8 @@
         </h3>
         <div class="d-flex align-items-center flex-wrap gap-2">
             <span id="liveClock" class="badge bg-dark fs-6 font-monospace me-2 shadow-sm py-2"></span>
-            <button class="btn btn-sm btn-outline-pink fw-bold shadow-sm manager-only" onclick="openPartnerModal()">👥 員工</button>
-            <button class="btn btn-sm btn-outline-dark fw-bold shadow-sm manager-only" onclick="openSettingsModal()">⚙️ 設定</button>
-            <button class="btn btn-sm btn-danger fw-bold shadow-sm" id="lockToggleBtn" onclick="toggleManagerMode()">🔒 模式</button>
+            <button class="btn btn-sm btn-outline-pink fw-bold shadow-sm" onclick="openPartnerModal()">👥 人員</button>
+            <button class="btn btn-sm btn-outline-dark fw-bold shadow-sm" onclick="openSettingsModal()">⚙️ 設定</button>
             <button class="btn btn-sm btn-outline-secondary fw-bold shadow-sm" onclick="logoutPOS()">登出</button>
         </div>
     </header>
@@ -172,8 +192,9 @@
         <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#cashier" type="button">🛒 收銀點單</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#ordersManagement" type="button" onclick="loadOrders()">🧾 歷史單據</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#inventory" type="button" onclick="loadInventory()">📦 庫存管理</button></li>
-        <li class="nav-item manager-only"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#restockLogTab" type="button" onclick="loadRestockLogs()">🚛 進貨紀錄</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#restockLogTab" type="button" onclick="loadRestockLogs()">🚛 進貨紀錄</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#report" type="button" onclick="loadReport()">📊 營業報表</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditLogTab" type="button" onclick="loadAuditLogs()">🕒 操作紀錄</button></li>
     </ul>
 
     <div class="tab-content" id="posTabsContent">
@@ -231,7 +252,7 @@
                     <div class="d-flex align-items-center gap-2">
                         <input type="date" id="orderDateFilter" class="form-control form-control-sm fw-bold border-dark" onchange="loadOrders()">
                         <button class="btn btn-outline-secondary btn-sm fw-bold text-nowrap" onclick="loadOrders()">重整</button>
-                        <button class="btn btn-danger btn-sm fw-bold text-nowrap manager-only" onclick="deleteDailyOrders()">🗑️ 清空本日單據</button>
+                        <button class="btn btn-danger btn-sm fw-bold text-nowrap" onclick="deleteDailyOrders()">🗑️ 清空本日單據</button>
                     </div>
                 </div>
                 <div class="table-responsive">
@@ -248,11 +269,11 @@
             <div class="bg-white p-3 rounded border">
                 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                     <h5 class="fw-bold text-dark m-0">📦 庫存與價格管理</h5>
-                    <button class="btn btn-pink fw-bold shadow-sm manager-only" onclick="openProductEditModal(null)">＋ 新增商品</button>
+                    <button class="btn btn-pink fw-bold shadow-sm" onclick="openProductEditModal(null)">＋ 新增商品</button>
                 </div>
                 <div class="table-responsive">
                     <table class="table table-hover align-middle table-rwd" style="min-width: 100%;">
-                        <thead class="table-dark bg-pink"><tr><th>商品名稱 (點擊管理細項)</th><th class="manager-only">成本</th><th>售價</th><th>總庫存狀態</th><th class="manager-only">修改</th></tr></thead>
+                        <thead class="table-dark bg-pink"><tr><th>商品名稱 (點擊管理細項)</th><th class="">成本</th><th>售價</th><th>總庫存狀態</th><th class="">修改</th></tr></thead>
                         <tbody id="inventoryTableBody"></tbody>
                     </table>
                 </div>
@@ -260,7 +281,7 @@
         </div>
 
         <!-- 🚛 進貨紀錄 -->
-        <div class="tab-pane fade manager-only" id="restockLogTab" role="tabpanel">
+        <div class="tab-pane fade" id="restockLogTab" role="tabpanel">
             <div class="row g-3">
                 <div class="col-lg-4">
                     <div class="p-3 bg-white border rounded shadow-sm sticky-top" style="top: 15px; z-index: 10;">
@@ -322,6 +343,22 @@
             </div>
         </div>
 
+        <!-- 🕒 操作紀錄 -->
+        <div class="tab-pane fade" id="auditLogTab" role="tabpanel">
+            <div class="bg-white p-3 rounded border shadow-sm">
+                <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                    <div><h5 class="fw-bold mb-0">🕒 個人操作紀錄</h5><div class="small text-secondary">依登入的個人 PIN 自動留下「誰、何時、做了什麼」</div></div>
+                    <div class="d-flex gap-2"><input type="date" id="auditDateInput" class="form-control form-control-sm fw-bold" onchange="loadAuditLogs()"><button class="btn btn-sm btn-outline-secondary fw-bold" onclick="loadAuditLogs()">重整</button></div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover audit-table table-rwd">
+                        <thead class="table-dark"><tr><th>時間</th><th>人員</th><th>操作</th><th>內容</th></tr></thead>
+                        <tbody id="auditLogBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- 📊 營業報表 -->
         <div class="tab-pane fade" id="report" role="tabpanel">
             <div class="p-3 bg-white rounded border mb-3 shadow-sm">
@@ -329,7 +366,7 @@
                     <div class="col-6 col-md-3">
                         <label class="form-label fw-bold text-secondary small">📊 類型</label>
                         <select id="reportModeSelect" class="form-select fw-bold border-primary" onchange="toggleReportModeInputs()">
-                            <option value="daily">📅 日報表</option><option value="monthly">📅 月報表</option>
+                            <option value="daily">📅 日報表</option><option value="monthly">📆 月報表</option>
                         </select>
                     </div>
                     <div class="col-6 col-md-3">
@@ -337,44 +374,54 @@
                         <input type="date" id="reportDateInput" class="form-control fw-bold" onchange="loadReport()">
                         <input type="month" id="reportMonthInput" class="form-control fw-bold d-none" onchange="loadReport()">
                     </div>
-                    <div class="col-12 col-md-3 manager-only">
-                        <label class="form-label fw-bold text-secondary small">🎪 費用支出 (連動計算)</label>
-                        <div class="input-group">
-                            <input type="number" id="dailyRentInput" class="form-control fw-bold" readonly placeholder="總支出" onclick="openRentModal()">
-                            <button class="btn btn-pink fw-bold" onclick="openRentModal()">明細</button>
-                        </div>
+                    <div class="col-12 col-md-3" id="dailyExpenseControl">
+                        <label class="form-label fw-bold text-secondary small">💸 費用支出</label>
+                        <div class="input-group"><input type="number" id="dailyRentInput" class="form-control fw-bold" readonly placeholder="總支出" onclick="openRentModal()"><button class="btn btn-pink fw-bold" onclick="openRentModal()">明細</button></div>
                     </div>
                     <div class="col-12 col-md-3 d-flex gap-2 justify-content-end">
-                        <button class="btn btn-success fw-bold flex-grow-1 shadow-sm" onclick="exportReportToImage()">系統截圖</button>
-                        <button class="btn btn-warning fw-bold flex-grow-1 shadow-sm text-dark border-warning" onclick="exportHandwrittenReport(this)">手寫匯出</button>
+                        <button class="btn btn-success fw-bold flex-grow-1 shadow-sm" onclick="exportReportToImage(event)">📸 匯出報表</button>
+                        <button id="handwrittenExportBtn" class="btn btn-warning fw-bold flex-grow-1 shadow-sm text-dark border-warning" onclick="exportHandwrittenReport(this)">✍️ 手寫匯出</button>
                     </div>
                 </div>
             </div>
 
             <div id="reportCaptureArea" class="shadow-sm bg-white rounded p-3">
-                <div class="text-center mb-3"><h4 class="fw-bold text-dark m-0">📊 <span id="reportTitleText">營業報表總覽</span></h4><p class="text-secondary small mt-1 mb-0" id="reportDateHeader"></p></div>
-                <div class="row row-cols-2 row-cols-md-3 g-2 mb-3 justify-content-center">
-                    <div class="col"><div class="stat-box rounded shadow-sm"><div class="box-title">💰 營業收入</div><div class="fs-5 fw-bold p-2 text-primary">$<span id="repRevenue">0</span></div></div></div>
-                    <div class="col manager-only"><div class="stat-box rounded shadow-sm"><div class="box-title" style="background-color:#adb5bd;">📉 總計成本</div><div class="fs-5 fw-bold p-2 text-warning">$<span id="repCost">0</span></div></div></div>
-                    <div class="col manager-only"><div class="stat-box rounded shadow-sm"><div class="box-title" style="background-color:#adb5bd;">💸 費用支出</div><div class="fs-5 fw-bold p-2" style="color:#6f42c1;">$<span id="repRent">0</span></div></div></div>
-                    <div class="col manager-only"><div class="stat-box rounded shadow-sm"><div class="box-title">🏆 淨利潤</div><div class="fs-5 fw-bold p-2 text-success">$<span id="repProfit">0</span></div></div></div>
-                    <div class="col"><div class="stat-box rounded shadow-sm border-success"><div class="box-title bg-success">📦 總銷量</div><div class="fs-5 fw-bold p-2 text-success"><span id="repFilmCount">0</span> 件</div></div></div>
-                    <div class="col"><div class="stat-box rounded shadow-sm border-info"><div class="box-title bg-info text-dark">👤 今日值班</div><div class="fs-6 fw-bold p-2 text-dark text-wrap" id="repPartners">無</div></div></div>
-                </div>
-                
-                <div class="card border-pink mb-4 shadow-sm">
-                    <div class="card-header bg-pink text-white fw-bold py-2">📋 大品項累計總計看板</div>
-                    <div class="card-body bg-light p-2">
-                        <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-xl-6 g-2" id="reportMainCategoryGrid">
-                        </div>
+                <div id="dailyReportContent">
+                    <div class="text-center mb-3"><h4 class="fw-bold text-dark m-0">📊 <span id="reportTitleText">營業報表總覽</span></h4><p class="text-secondary small mt-1 mb-0" id="reportDateHeader"></p></div>
+                    <div class="row row-cols-2 row-cols-md-3 g-2 mb-3 justify-content-center">
+                        <div class="col"><div class="stat-box rounded shadow-sm"><div class="box-title">💰 營業收入</div><div class="fs-5 fw-bold p-2 text-primary">$<span id="repRevenue">0</span></div></div></div>
+                        <div class="col"><div class="stat-box rounded shadow-sm"><div class="box-title" style="background-color:#adb5bd;">📉 總計成本</div><div class="fs-5 fw-bold p-2 text-warning">$<span id="repCost">0</span></div></div></div>
+                        <div class="col"><div class="stat-box rounded shadow-sm"><div class="box-title" style="background-color:#adb5bd;">💸 費用支出</div><div class="fs-5 fw-bold p-2" style="color:#6f42c1;">$<span id="repRent">0</span></div></div></div>
+                        <div class="col"><div class="stat-box rounded shadow-sm"><div class="box-title">🏆 淨利潤</div><div class="fs-5 fw-bold p-2 text-success">$<span id="repProfit">0</span></div></div></div>
+                        <div class="col"><div class="stat-box rounded shadow-sm border-success"><div class="box-title bg-success">📦 總銷量</div><div class="fs-5 fw-bold p-2 text-success"><span id="repFilmCount">0</span> 件</div></div></div>
+                        <div class="col"><div class="stat-box rounded shadow-sm border-info"><div class="box-title bg-info text-dark">👤 當日值班</div><div class="fs-6 fw-bold p-2 text-dark text-wrap" id="repPartners">無</div></div></div>
                     </div>
+                    <div class="card border-pink mb-4 shadow-sm"><div class="card-header bg-pink text-white fw-bold py-2">📋 大品項累計總計看板</div><div class="card-body bg-light p-2"><div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-xl-6 g-2" id="reportMainCategoryGrid"></div></div></div>
+                    <div class="w-100"><table class="table table-bordered report-theme-table table-rwd w-100"><thead><tr><th>商品名稱</th><th>售出數量</th><th>銷售總額</th><th>成本總額</th></tr></thead><tbody id="reportDetailsTableBody"></tbody></table></div>
                 </div>
 
-                <div class="w-100">
-                    <table class="table table-bordered report-theme-table table-rwd w-100">
-                        <thead><tr><th>商品名稱</th><th>售出數量</th><th>銷售總額</th><th class="manager-only">成本總額</th></tr></thead>
-                        <tbody id="reportDetailsTableBody"></tbody>
-                    </table>
+                <div id="monthlyReportContent" class="d-none">
+                    <div class="text-center mb-4"><h3 class="fw-bold mb-1">📆 月營運總覽</h3><div id="monthlyTitle" class="text-secondary fw-bold"></div></div>
+                    <div class="row row-cols-2 row-cols-lg-5 g-2 mb-3">
+                        <div class="col"><div class="monthly-summary-card p-3"><div class="label">💰 月營業額</div><div class="value text-primary" id="monthRevenue">$0</div></div></div>
+                        <div class="col"><div class="monthly-summary-card p-3"><div class="label">📉 月總成本</div><div class="value text-warning" id="monthCost">$0</div></div></div>
+                        <div class="col"><div class="monthly-summary-card p-3"><div class="label">💸 月總支出</div><div class="value" style="color:#6f42c1" id="monthExpenses">$0</div></div></div>
+                        <div class="col"><div class="monthly-summary-card p-3"><div class="label">🏆 月淨利</div><div class="value text-success" id="monthProfit">$0</div></div></div>
+                        <div class="col"><div class="monthly-summary-card p-3"><div class="label">📦 月總銷量</div><div class="value text-dark" id="monthQty">0 件</div></div></div>
+                    </div>
+                    <div class="row row-cols-1 row-cols-md-3 g-2 mb-3">
+                        <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">營業天數</div><div class="fs-4 fw-bold" id="monthOpenDays">0 天</div></div></div>
+                        <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">平均每日營業額</div><div class="fs-4 fw-bold text-primary" id="monthAverage">$0</div></div></div>
+                        <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">本月最高營業日</div><div class="fs-6 fw-bold" id="monthBestDay">無資料</div></div></div>
+                    </div>
+
+                    <div class="monthly-section mb-3"><div class="monthly-section-title">📈 每日營業額走勢</div><div id="monthBars" class="month-bars"></div></div>
+                    <div class="monthly-section mb-3"><div class="monthly-section-title">📅 每日營業表現</div><div class="table-responsive"><table id="monthlyDailyTable" class="table table-hover align-middle"><thead class="table-light"><tr><th>日期</th><th>單數</th><th>營業額</th><th>成本</th><th>支出</th><th>淨利</th></tr></thead><tbody id="monthlyDailyBody"></tbody></table></div></div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-lg-7"><div class="monthly-section h-100"><div class="monthly-section-title">🏅 本月商品排行</div><div id="monthlyTopProducts" class="p-2"></div></div></div>
+                        <div class="col-lg-5"><div class="monthly-section mb-3"><div class="monthly-section-title">💳 付款方式</div><div id="monthlyPayments" class="p-3"></div></div><div class="monthly-section"><div class="monthly-section-title">💸 費用支出</div><div id="monthlyExpenseBreakdown" class="p-3"></div></div></div>
+                    </div>
+                    <div class="monthly-section"><div class="monthly-section-title">👥 本月值班人員</div><div id="monthlyPartners" class="p-3 fw-bold">無資料</div></div>
                 </div>
             </div>
         </div>
@@ -385,17 +432,6 @@
 
 <!-- ================= Modal 區塊 ================= -->
 
-<div class="modal fade" id="managerAuthModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered modal-sm">
-        <div class="modal-content">
-            <div class="modal-header bg-danger text-white"><h5 class="modal-title fw-bold">🔒 主管解鎖</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
-            <div class="modal-body"><input type="password" id="managerPwdInput" class="form-control form-control-lg fw-bold text-center" placeholder="請輸入密碼"></div>
-            <div class="modal-footer p-0"><button type="button" class="btn btn-danger w-100 m-0 fw-bold rounded-bottom" style="height:50px;" onclick="submitManagerAuth()">確認解鎖</button></div>
-        </div>
-    </div>
-</div>
-
-
 <div class="modal fade" id="settingsModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -403,7 +439,6 @@
             <div class="modal-body p-3">
                 <div class="mb-3"><label class="form-label fw-bold">🏪 店家名稱</label><input id="settingsStoreName" class="form-control fw-bold"></div>
                 <div class="mb-3"><label class="form-label fw-bold">📊 報表標題</label><input id="settingsReportTitle" class="form-control fw-bold"></div>
-                <div class="mb-3"><label class="form-label fw-bold">🔐 更換主管 PIN</label><input type="password" inputmode="numeric" id="settingsManagerPin" class="form-control fw-bold" placeholder="不更換請留白"></div>
                 <hr>
                 <div class="fw-bold mb-2">💳 付款方式</div>
                 <div class="input-group mb-2"><input id="newPaymentMethod" class="form-control" placeholder="新增付款方式"><button class="btn btn-outline-dark fw-bold" onclick="addPaymentMethod()">新增</button></div>
@@ -433,11 +468,11 @@
 <div class="modal fade" id="partnerModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
-            <div class="modal-header bg-pink text-white"><h5 class="modal-title fw-bold">👥 員工管理</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+            <div class="modal-header bg-pink text-white"><h5 class="modal-title fw-bold">👥 人員管理</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
             <div class="modal-body">
                 <input type="hidden" id="editPartnerId">
                 <div class="row g-2 mb-3">
-                    <div class="col-5"><input type="text" id="newPartnerName" class="form-control border-primary fw-bold" placeholder="員工名字"></div>
+                    <div class="col-5"><input type="text" id="newPartnerName" class="form-control border-primary fw-bold" placeholder="使用者名字"></div>
                     <div class="col-4"><input type="password" inputmode="numeric" id="newPartnerPwd" class="form-control border-danger fw-bold" placeholder="新增必填；編輯留白不變"></div>
                     <div class="col-3"><button class="btn btn-pink w-100 fw-bold" id="savePartnerBtn" onclick="savePartner()">新增</button></div>
                 </div>
@@ -638,14 +673,13 @@
         return res;
     };
 
-    let isManagerUnlocked = false;
-    let storeDisplayName = '配件 POS';
+        let storeDisplayName = '配件 POS';
  
     let allProducts = [], cart = [], currentSubItems = [];
     let restockCart = []; 
     let batchHistoryRaw = [];
     let ordersHistoryRaw = [], editOrderRows = []; 
-    let managerAuthModalObj, partnerModalObj, subItemBootstrapModal, rentModalObj, productEditModalObj, restockMatrixModalObj, editBatchModalObj, editOrderModalObj, exportResultModalObj, settingsModalObj;
+    let partnerModalObj, subItemBootstrapModal, rentModalObj, productEditModalObj, restockMatrixModalObj, editBatchModalObj, editOrderModalObj, exportResultModalObj, settingsModalObj;
 
 
     function localDateString(date = new Date()) {
@@ -663,7 +697,6 @@
         document.getElementById('mainAppContent').style.display = 'none';
         document.getElementById('setupOverlay').style.display = 'none';
         document.getElementById('loginOverlay').style.display = 'flex';
-        isManagerUnlocked = false;
         refreshLoginPartners();
     }
 
@@ -694,9 +727,9 @@
         document.getElementById('restockMonthInput').value = today.substring(0, 7);
         document.getElementById('restockYearInput').value = today.substring(0, 4);
         document.getElementById('checkoutDateInput').value = today;
+        const auditInput=document.getElementById('auditDateInput'); if(auditInput) auditInput.value=today;
         document.getElementById('orderDateFilter').value = today;
 
-        managerAuthModalObj = new bootstrap.Modal(document.getElementById('managerAuthModal'));
         partnerModalObj = new bootstrap.Modal(document.getElementById('partnerModal'));
         subItemBootstrapModal = new bootstrap.Modal(document.getElementById('subItemModal'));
         rentModalObj = new bootstrap.Modal(document.getElementById('rentModal'));
@@ -729,28 +762,21 @@
         document.getElementById('loginOverlay').style.display = 'none';
         document.getElementById('mainAppContent').style.display = 'block';
         document.getElementById('headerPartnerName').innerText = `👋 ${auth.partner} - `;
-        isManagerUnlocked = !!auth.manager;
-        updateManagerUI();
         await loadStoreSettings();
         await loadPaymentMethods();
         loadProducts(); loadOrders(); loadInventory(); loadReport();
-        if (isManagerUnlocked) loadPartnersForManager();
+        loadPeople();
     };
 
-    function updateManagerUI() { 
-        if (isManagerUnlocked) { document.body.classList.add('manager-unlocked'); } else { document.body.classList.remove('manager-unlocked'); }
-        const lockBtn = document.getElementById('lockToggleBtn'); lockBtn.className = isManagerUnlocked ? "btn btn-sm btn-success fw-bold shadow-sm" : "btn btn-sm btn-danger fw-bold shadow-sm"; lockBtn.innerText = isManagerUnlocked ? "🔓 主管" : "🔒 員工"; 
-    }
     
     async function submitFirstSetup(btn) {
         const payload = {
             store_name: document.getElementById('setupStoreName').value.trim(),
-            manager_pin: document.getElementById('setupManagerPin').value.trim(),
             partner_name: document.getElementById('setupPartnerName').value.trim(),
             partner_pin: document.getElementById('setupPartnerPin').value.trim()
         };
-        if (!payload.store_name || payload.manager_pin.length < 4 || !payload.partner_name || payload.partner_pin.length < 4) {
-            alert('⚠️ 請填完整；主管與員工 PIN 至少 4 碼。'); return;
+        if (!payload.store_name || !payload.partner_name || payload.partner_pin.length < 4) {
+            alert('⚠️ 請填完整；個人 PIN 至少 4 碼。'); return;
         }
         btn.disabled = true; btn.innerText = '建立中...';
         const res = await originalFetch('/api/setup', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
@@ -789,28 +815,8 @@
         window.location.reload();
     }
 
-    async function toggleManagerMode() {
-        if (!isManagerUnlocked) {
-            document.getElementById('managerPwdInput').value = '';
-            managerAuthModalObj.show();
-        } else {
-            await fetch('/api/auth/manager/lock', {method:'POST'});
-            isManagerUnlocked = false;
-            updateManagerUI(); loadInventory(); loadReport();
-        }
-    }
 
-    async function submitManagerAuth() {
-        const pwd = document.getElementById('managerPwdInput').value;
-        const res = await fetch('/api/auth/manager', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password: pwd})});
-        if (res.ok) {
-            isManagerUnlocked = true; updateManagerUI(); managerAuthModalObj.hide();
-            loadInventory(); loadReport(); loadPartnersForManager();
-        } else { const data = await res.json(); alert(data.message || '❌ 主管 PIN 錯誤！'); }
-    }
-
-    async function loadPartnersForManager() {
-        if (!isManagerUnlocked) return;
+    async function loadPeople() {
         const res = await fetch('/api/partners'); const data = await res.json();
         const list = document.getElementById('partnerListGroup'); list.innerHTML = '';
         data.forEach(p => {
@@ -824,12 +830,11 @@
     }
 
     function openPartnerModal() {
-        if(!isManagerUnlocked) return;
         document.getElementById('editPartnerId').value = '';
         document.getElementById('newPartnerName').value = '';
         document.getElementById('newPartnerPwd').value = '';
         document.getElementById('savePartnerBtn').innerText = '新增';
-        loadPartnersForManager(); partnerModalObj.show();
+        loadPeople(); partnerModalObj.show();
     }
 
     function editPartner(id, name) {
@@ -843,7 +848,7 @@
         const id = document.getElementById('editPartnerId').value;
         const name = document.getElementById('newPartnerName').value.trim();
         const pwd = document.getElementById('newPartnerPwd').value.trim();
-        if(!name || (!id && !pwd)) { alert('新增員工需填名稱與 PIN；編輯時 PIN 可留白。'); return; }
+        if(!name || (!id && !pwd)) { alert('新增使用者需填名稱與 PIN；編輯時 PIN 可留白。'); return; }
         const payload = {name, password: pwd}; if(id) payload.id = id;
         const res = await fetch('/api/partners', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
         const data = await res.json();
@@ -852,18 +857,16 @@
     }
 
     async function deletePartner(id) {
-        if(!confirm('刪除此員工？')) return;
+        if(!confirm('刪除此使用者？')) return;
         const res = await fetch(`/api/partners?id=${id}`, {method:'DELETE'}); const data = await res.json();
         if(!res.ok) alert(data.message || '刪除失敗');
-        loadPartnersForManager();
+        loadPeople();
     }
 
     async function openSettingsModal() {
-        if(!isManagerUnlocked) return;
         const res = await fetch('/api/settings'); const data = await res.json();
         document.getElementById('settingsStoreName').value = data.store_name || '';
         document.getElementById('settingsReportTitle').value = data.report_title || '';
-        document.getElementById('settingsManagerPin').value = '';
         document.getElementById('newPaymentMethod').value = '';
         await renderPaymentMethodSettings();
         settingsModalObj.show();
@@ -872,8 +875,7 @@
     async function saveSettings() {
         const payload = {
             store_name: document.getElementById('settingsStoreName').value.trim(),
-            report_title: document.getElementById('settingsReportTitle').value.trim(),
-            new_manager_pin: document.getElementById('settingsManagerPin').value.trim()
+            report_title: document.getElementById('settingsReportTitle').value.trim()
         };
         const res = await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
         const data = await res.json(); if(!res.ok) { alert(data.message || '設定失敗'); return; }
@@ -1049,11 +1051,10 @@
             let audit = '';
             if (o.edited_by) audit += `<div class="audit-note text-primary fw-bold">✏️ 最後編輯：${escapeHTML(o.edited_by)}・${escapeHTML(o.edited_at || '')}${o.edit_count ? `・共 ${o.edit_count} 次` : ''}</div>`;
             if (o.is_void) audit += `<div class="audit-note text-danger fw-bold">⛔ 作廢：${escapeHTML(o.voided_by || '未知')}・${escapeHTML(o.voided_at || '')}</div>`;
-            const action = o.is_void ? '<span class="badge bg-secondary">已作廢</span>' : `<div class="d-flex flex-wrap gap-1"><button class="btn btn-sm btn-outline-primary py-0 manager-only" onclick="openOrderEdit(${o.id})">✏️ 編輯</button><button class="btn btn-sm btn-outline-warning py-0 manager-only" onclick="changeOrderDate(${o.id}, '${o.sale_date}')">📅 改日期</button><button class="btn btn-sm btn-outline-danger py-0 manager-only" onclick="deleteOrder(${o.id})">⛔ 作廢</button></div>`;
+            const action = o.is_void ? '<span class="badge bg-secondary">已作廢</span>' : `<div class="d-flex flex-wrap gap-1"><button class="btn btn-sm btn-outline-primary py-0" onclick="openOrderEdit(${o.id})">✏️ 編輯</button><button class="btn btn-sm btn-outline-warning py-0" onclick="changeOrderDate(${o.id}, '${o.sale_date}')">📅 改日期</button><button class="btn btn-sm btn-outline-danger py-0" onclick="deleteOrder(${o.id})">⛔ 作廢</button></div>`;
             tr.innerHTML = `<td data-label="單號" class="fw-bold text-primary">${escapeHTML(o.invoice_no)}</td><td data-label="夥伴"><span class="badge bg-pink">${escapeHTML(o.partner_name || '未指定')}</span></td><td data-label="時間" class="small text-secondary">${escapeHTML(o.created_at)}${audit}</td><td data-label="明細" class="text-start">${items}</td><td data-label="方式"><span class="badge bg-light text-dark border">${escapeHTML(o.payment_method)}</span></td><td data-label="總額" class="fw-bold text-danger">$${o.total_amount}</td><td data-label="操作">${action}</td>`;
             tbody.appendChild(tr);
         });
-        updateManagerUI();
     }
 
     function orderEditProductOptions(selectedId) {
@@ -1096,7 +1097,6 @@
     }
 
     async function openOrderEdit(id) {
-        if(!isManagerUnlocked) { alert('🔒 請先解鎖主管模式！'); return; }
         const order = ordersHistoryRaw.find(o => Number(o.id) === Number(id)); if(!order || order.is_void) return;
         if(!allProducts.length) await loadProducts();
         document.getElementById('editOrderId').value = order.id;
@@ -1122,7 +1122,6 @@
     }
 
     async function changeOrderDate(id, oldDate) {
-        if(!isManagerUnlocked) { alert('🔒 請先解鎖主管模式！'); return; }
         const newDate = prompt('請輸入要修改的日期 (YYYY-MM-DD)：', oldDate);
         if(newDate && newDate !== oldDate) {
             const res = await fetch('/api/orders/update_date', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({order_id:id, new_date:newDate})});
@@ -1131,7 +1130,6 @@
     }
 
     async function deleteOrder(id) {
-        if(!isManagerUnlocked) { alert('🔒 請先解鎖主管模式！'); return; }
         if(!confirm('作廢後會退回庫存，但單據紀錄會保留。確定？')) return;
         const res = await fetch(`/api/orders?id=${id}`, {method:'DELETE'}); const data = await res.json();
         if(!res.ok) { alert(data.message || '作廢失敗'); return; }
@@ -1139,7 +1137,6 @@
     }
 
     async function deleteDailyOrders() {
-        if(!isManagerUnlocked) { alert('🔒 請先解鎖主管模式！'); return; }
         const date = document.getElementById('orderDateFilter').value; if(!date) return;
         if(!confirm(`⚠️ 確定將 ${date} 所有有效單據批次作廢？
 庫存會退回，單據紀錄仍會保留。`)) return;
@@ -1163,14 +1160,13 @@
                 const a=document.createElement('a'); a.href='javascript:void(0)'; a.className='text-decoration-none text-pink'; a.textContent=p.name + ' ';
                 a.onclick=()=>openSubItemModal(p.id,p.name); const badge=document.createElement('span'); badge.className='badge bg-pink small'; badge.textContent='+細項'; a.appendChild(badge); nameCell.appendChild(a);
             } else { nameCell.textContent=p.name; const badge=document.createElement('span'); badge.className='badge bg-secondary ms-1'; badge.textContent='免庫存'; nameCell.appendChild(badge); }
-            const cost=document.createElement('td'); cost.setAttribute('data-label','成本'); cost.className='text-warning fw-bold manager-only'; cost.textContent=isManagerUnlocked?`$${p.cost}`:'🔒';
+            const cost=document.createElement('td'); cost.setAttribute('data-label','成本'); cost.className='text-warning fw-bold'; cost.textContent=`$${p.cost}`;
             const price=document.createElement('td'); price.setAttribute('data-label','售價'); price.className='text-primary fw-bold'; price.textContent=p.price_mode==='custom'?'結帳輸入':`$${p.price}`;
             const stock=document.createElement('td'); stock.setAttribute('data-label','狀態'); stock.className=`fw-extrabold ${sClass}`; stock.innerHTML=stockText + ' ' + sAlert;
-            const edit=document.createElement('td'); edit.setAttribute('data-label','修改'); edit.className='manager-only text-end';
-            if(isManagerUnlocked) { const b=document.createElement('button'); b.className='btn btn-sm btn-outline-primary py-0 px-3 fw-bold shadow-sm'; b.textContent='✏️ 編輯修改'; b.onclick=()=>openProductEditModal(p.id); edit.appendChild(b); } else edit.textContent='🔒';
+            const edit=document.createElement('td'); edit.setAttribute('data-label','修改'); edit.className='text-end';
+            const b=document.createElement('button'); b.className='btn btn-sm btn-outline-primary py-0 px-3 fw-bold shadow-sm'; b.textContent='✏️ 編輯修改'; b.onclick=()=>openProductEditModal(p.id); edit.appendChild(b);
             tr.append(nameCell,cost,price,stock,edit); tbody.appendChild(tr);
         });
-        updateManagerUI();
     }
 
     function syncProductStockControls() {
@@ -1181,8 +1177,7 @@
     }
 
     function openProductEditModal(id) {
-        if(!isManagerUnlocked) return;
-        if(id) {
+if(id) {
             const p=allProducts.find(x=>x.id===id);
             document.getElementById('editProdId').value=p.id; document.getElementById('editProdName').value=p.name;
             document.getElementById('editProdCost').value=p.cost; document.getElementById('editProdPrice').value=p.price;
@@ -1305,8 +1300,7 @@
     }
 
     async function loadRestockLogs() {
-        if(!isManagerUnlocked) return; 
-        const mode = document.getElementById('restockModeSelect').value; let date = '';
+const mode = document.getElementById('restockModeSelect').value; let date = '';
         if(mode === 'daily') date = document.getElementById('restockDateInput').value; else if(mode === 'monthly') date = document.getElementById('restockMonthInput').value; else date = document.getElementById('restockYearInput').value;
         const res = await fetch(`/api/restock?mode=${mode}&date=${date}&trash=${isShowingTrash ? 1 : 0}`); 
         const data = await res.json(); batchHistoryRaw = data; 
@@ -1354,8 +1348,7 @@
     }
 
     function openEditBatchModal(batch_no) {
-        if(!isManagerUnlocked) return;
-        const batch = batchHistoryRaw.find(b => b.batch_no === batch_no); if(!batch) return;
+const batch = batchHistoryRaw.find(b => b.batch_no === batch_no); if(!batch) return;
         document.getElementById('editBatchNo').value = batch.batch_no; document.getElementById('editBatchNoDisplay').innerText = `編輯單號：${batch.batch_no}`;
         let html = '';
         batch.items.forEach((item, index) => {
@@ -1377,7 +1370,6 @@
 
     function populateCopyFromSelect() { const sel = document.getElementById('copyFromProduct'); sel.innerHTML = '<option value="">請選擇...</option>'; allProducts.forEach(p => { if(p.variants && p.variants.length > 0) sel.innerHTML += `<option value="${p.id}">${p.name}</option>`; }); }
     async function openSubItemModal(pid, pname) {
-        if(!isManagerUnlocked) { alert("🔒 需解鎖主管模式！"); return; }
         document.getElementById('currentParentProductId').value = pid; document.getElementById('subItemParentName').innerText = pname; document.getElementById('newSubName').value = ''; document.getElementById('newSubStock').value = '';
         const res = await fetch(`/api/variants?product_id=${pid}`); const data = await res.json(); currentSubItems = data.variants || [];
         const tbody = document.getElementById('subItemTableBody'); tbody.innerHTML = '';
@@ -1392,46 +1384,124 @@
     async function copyVariants() { const src_id = document.getElementById('copyFromProduct').value; const tgt_id = document.getElementById('currentParentProductId').value; if(!src_id) return; if(src_id === tgt_id) { alert("不能複製自己！"); return; } if(confirm("確定帶入該商品所有版型？")) { await fetch('/api/variants/copy', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source_id: src_id, target_id: tgt_id}) }); openSubItemModal(tgt_id, document.getElementById('subItemParentName').innerText); loadInventory(); loadProducts(); } }
     async function deleteSubItem(vid) { const pid = document.getElementById('currentParentProductId').value; if(confirm("確定刪除此細項？")) { await fetch(`/api/variants?id=${vid}&product_id=${pid}`, { method:'DELETE' }); openSubItemModal(pid, document.getElementById('subItemParentName').innerText); loadInventory(); loadProducts(); } }
 
-    function toggleReportModeInputs() { const mode = document.getElementById('reportModeSelect').value; const dInput = document.getElementById('reportDateInput'); const mInput = document.getElementById('reportMonthInput'); dInput.classList.add('d-none'); mInput.classList.add('d-none'); if (mode === 'daily') dInput.classList.remove('d-none'); else mInput.classList.remove('d-none'); loadReport(); }
-    
-    async function loadReport() {
-        const mode = document.getElementById('reportModeSelect').value; 
-        const date = mode === 'daily' ? document.getElementById('reportDateInput').value : document.getElementById('reportMonthInput').value; 
-        document.getElementById('reportDateHeader').innerText = `【 ${date} 報表 】`;
-        
-        const res = await fetch(`/api/report?mode=${mode}&date=${date}&month=${date}`); 
-        const data = await res.json();
-        
-        document.getElementById('repFilmCount').innerText = data.orders_count > 0 ? (data.details || []).reduce((s, i) => s + (i.quantity || 0), 0) : 0;
-        if(isManagerUnlocked) document.getElementById('dailyRentInput').value = data.rent || 0;
-        document.getElementById('repRevenue').innerText = data.revenue || 0; 
-        document.getElementById('repCost').innerText = data.cost || 0; 
-        document.getElementById('repRent').innerText = data.rent || 0; 
-        document.getElementById('repProfit').innerText = data.net_profit || 0; 
-        document.getElementById('repPartners').innerText = data.partners && data.partners.length > 0 ? data.partners.join(', ') : '無資料';
-        
-        const tbody = document.getElementById('reportDetailsTableBody'); tbody.innerHTML = '';
-        (data.details || []).forEach(d => { tbody.innerHTML += `<tr><td data-label="商品" class="text-start fw-bold py-2">📱 ${d.name}</td><td data-label="數量" class="text-center"><span class="badge bg-secondary">${d.quantity} 件</span></td><td data-label="總額" class="text-primary fw-bold text-center">$${d.total_sale}</td><td data-label="成本" class="text-warning fw-bold text-center manager-only">$${d.total_cost}</td></tr>`; });
-        
-        const grid = document.getElementById('reportMainCategoryGrid');
-        if (grid) {
-            grid.innerHTML = '';
-            (data.main_categories || []).forEach(c => {
-                grid.innerHTML += `
-                <div class="col">
-                    <div class="card border-secondary h-100 text-center shadow-sm">
-                        <div class="card-header bg-dark text-white p-1 text-truncate" style="font-size:0.8rem; font-weight:bold;" title="${c.name}">${c.name}</div>
-                        <div class="card-body p-2 d-flex justify-content-center align-items-center bg-white">
-                            <span class="fs-4 fw-bold text-dark">${c.qty}</span> <span class="text-secondary ms-1">件</span>
-                        </div>
-                    </div>
-                </div>`;
-            });
-        }
-        updateManagerUI();
+    function money(v) { return '$' + Math.round(Number(v || 0)).toLocaleString('zh-TW'); }
+
+    function toggleReportModeInputs() {
+        const mode = document.getElementById('reportModeSelect').value;
+        const dInput = document.getElementById('reportDateInput');
+        const mInput = document.getElementById('reportMonthInput');
+        const dailyExpense = document.getElementById('dailyExpenseControl');
+        const hwBtn = document.getElementById('handwrittenExportBtn');
+        dInput.classList.toggle('d-none', mode !== 'daily');
+        mInput.classList.toggle('d-none', mode !== 'monthly');
+        dailyExpense.classList.toggle('d-none', mode !== 'daily');
+        hwBtn.classList.toggle('d-none', mode !== 'daily');
+        document.getElementById('dailyReportContent').classList.toggle('d-none', mode !== 'daily');
+        document.getElementById('monthlyReportContent').classList.toggle('d-none', mode !== 'monthly');
+        loadReport();
     }
 
-    function exportReportToImage() { const element = document.getElementById('reportCaptureArea'); const btn = event.currentTarget; const originalText = btn.innerHTML; btn.innerHTML = "⏳ 生成中..."; btn.disabled = true; html2canvas(element, { useCORS: true, backgroundColor: "#ffffff", scale: 2 }).then(canvas => { const link = document.createElement('a'); link.download = `營業系統截圖.png`; link.href = canvas.toDataURL('image/png'); link.click(); btn.innerHTML = originalText; btn.disabled = false; }).catch(err => { alert("❌ 截圖失敗"); btn.innerHTML = originalText; btn.disabled = false; }); }
+    async function loadReport() {
+        const mode = document.getElementById('reportModeSelect').value;
+        const target = mode === 'daily' ? document.getElementById('reportDateInput').value : document.getElementById('reportMonthInput').value;
+        const res = await fetch(`/api/report?mode=${mode}&date=${target}&month=${target}`);
+        const data = await res.json();
+        if (!res.ok) { alert(data.message || '報表讀取失敗'); return; }
+        if (mode === 'daily') renderDailyReport(target, data); else renderMonthlyReport(target, data);
+    }
+
+    function renderDailyReport(date, data) {
+        document.getElementById('reportDateHeader').innerText = `【 ${date} 報表 】`;
+        const totalQty = (data.details || []).reduce((s, i) => s + Number(i.quantity || 0), 0);
+        document.getElementById('repFilmCount').innerText = totalQty;
+        document.getElementById('dailyRentInput').value = data.rent || 0;
+        document.getElementById('repRevenue').innerText = Math.round(data.revenue || 0).toLocaleString('zh-TW');
+        document.getElementById('repCost').innerText = Math.round(data.cost || 0).toLocaleString('zh-TW');
+        document.getElementById('repRent').innerText = Math.round(data.rent || 0).toLocaleString('zh-TW');
+        document.getElementById('repProfit').innerText = Math.round(data.net_profit || 0).toLocaleString('zh-TW');
+        document.getElementById('repPartners').innerText = data.partners && data.partners.length ? data.partners.join('、') : '無資料';
+        const tbody = document.getElementById('reportDetailsTableBody'); tbody.innerHTML = '';
+        (data.details || []).forEach(d => {
+            const tr=document.createElement('tr');
+            tr.innerHTML=`<td data-label="商品" class="text-start fw-bold py-2"></td><td data-label="數量" class="text-center"><span class="badge bg-secondary">${d.quantity} 件</span></td><td data-label="總額" class="text-primary fw-bold text-center">${money(d.total_sale)}</td><td data-label="成本" class="text-warning fw-bold text-center">${money(d.total_cost)}</td>`;
+            tr.children[0].textContent='📱 '+d.name; tbody.appendChild(tr);
+        });
+        const grid = document.getElementById('reportMainCategoryGrid'); grid.innerHTML='';
+        (data.main_categories || []).forEach(c => {
+            const col=document.createElement('div'); col.className='col';
+            const card=document.createElement('div'); card.className='card border-secondary h-100 text-center shadow-sm';
+            const head=document.createElement('div'); head.className='card-header bg-dark text-white p-1 text-truncate'; head.style.cssText='font-size:.8rem;font-weight:bold'; head.title=c.name; head.textContent=c.name;
+            const body=document.createElement('div'); body.className='card-body p-2 d-flex justify-content-center align-items-center bg-white'; body.innerHTML=`<span class="fs-4 fw-bold text-dark">${c.qty}</span><span class="text-secondary ms-1">件</span>`;
+            card.append(head,body); col.appendChild(card); grid.appendChild(col);
+        });
+    }
+
+    function renderMonthlyReport(month, data) {
+        const totalQty=(data.details||[]).reduce((s,i)=>s+Number(i.quantity||0),0);
+        document.getElementById('monthlyTitle').textContent=`${month} ｜ ${storeDisplayName}`;
+        document.getElementById('monthRevenue').textContent=money(data.revenue);
+        document.getElementById('monthCost').textContent=money(data.cost);
+        document.getElementById('monthExpenses').textContent=money(data.rent);
+        document.getElementById('monthProfit').textContent=money(data.net_profit);
+        document.getElementById('monthQty').textContent=`${totalQty.toLocaleString('zh-TW')} 件`;
+        document.getElementById('monthOpenDays').textContent=`${Number(data.open_days||0)} 天`;
+        document.getElementById('monthAverage').textContent=money(data.avg_daily_revenue);
+        document.getElementById('monthBestDay').textContent=data.best_day ? `${data.best_day.date.slice(5)} ｜ ${money(data.best_day.revenue)}` : '無資料';
+
+        const days=data.daily_breakdown||[];
+        const maxRev=Math.max(1,...days.map(x=>Number(x.revenue||0)));
+        const bars=document.getElementById('monthBars'); bars.innerHTML='';
+        if(!days.length){ bars.innerHTML='<div class="text-secondary text-center w-100 py-5">本月尚無資料</div>'; }
+        days.forEach(d=>{
+            const wrap=document.createElement('div'); wrap.className='month-bar-wrap';
+            const bar=document.createElement('div'); bar.className='month-bar'; bar.style.height=`${Math.max(3,(Number(d.revenue||0)/maxRev)*140)}px`; bar.title=`${d.date} ${money(d.revenue)}`;
+            const label=document.createElement('div'); label.className='month-bar-label'; label.textContent=d.date.slice(8);
+            wrap.append(bar,label); bars.appendChild(wrap);
+        });
+
+        const dailyBody=document.getElementById('monthlyDailyBody'); dailyBody.innerHTML='';
+        days.forEach(d=>{
+            const tr=document.createElement('tr');
+            const vals=[d.date.slice(5),d.orders_count,money(d.revenue),money(d.cost),money(d.expenses),money(d.profit)];
+            const labels=['日期','單數','營業額','成本','支出','淨利'];
+            vals.forEach((v,i)=>{const td=document.createElement('td');td.setAttribute('data-label',labels[i]);td.textContent=v;if(i===5)td.className=Number(d.profit)>=0?'fw-bold text-success':'fw-bold text-danger';tr.appendChild(td)});
+            dailyBody.appendChild(tr);
+        });
+        if(!days.length) dailyBody.innerHTML='<tr><td colspan="6" class="text-center text-secondary py-4">本月尚無資料</td></tr>';
+
+        const rank=document.getElementById('monthlyTopProducts'); rank.innerHTML='';
+        (data.top_products||[]).forEach((d,i)=>{
+            const row=document.createElement('div'); row.className='d-flex align-items-center gap-2 p-2 border-bottom';
+            const badge=document.createElement('span'); badge.className='rank-badge'; badge.textContent=i+1;
+            const mid=document.createElement('div'); mid.className='flex-grow-1'; const nm=document.createElement('div');nm.className='fw-bold';nm.textContent=d.name; const sub=document.createElement('div');sub.className='small text-secondary';sub.textContent=`${d.quantity} 件`;mid.append(nm,sub);
+            const amt=document.createElement('div');amt.className='fw-bold text-primary';amt.textContent=money(d.total_sale); row.append(badge,mid,amt);rank.appendChild(row);
+        });
+        if(!(data.top_products||[]).length) rank.innerHTML='<div class="text-secondary text-center py-4">本月尚無銷售</div>';
+
+        const pay=document.getElementById('monthlyPayments'); pay.innerHTML='';
+        Object.entries(data.payments||{}).sort((a,b)=>Number(b[1])-Number(a[1])).forEach(([name,amount])=>{pay.insertAdjacentHTML('beforeend',`<div class="d-flex justify-content-between py-2 border-bottom"><span class="fw-bold"></span><span class="text-primary fw-bold">${money(amount)}</span></div>`);pay.lastElementChild.firstElementChild.textContent=name;});
+        if(!Object.keys(data.payments||{}).length) pay.innerHTML='<div class="text-secondary">無資料</div>';
+
+        const ex=data.expenses||{}; const defs=[['租金',ex.rent_base],['清潔費',ex.cleaning],['電費',ex.electricity],['其他',ex.other]];
+        const exBox=document.getElementById('monthlyExpenseBreakdown'); exBox.innerHTML='';
+        defs.filter(x=>Number(x[1]||0)>0).forEach(([name,amount])=>{exBox.insertAdjacentHTML('beforeend',`<div class="d-flex justify-content-between py-2 border-bottom"><span class="fw-bold"></span><span class="fw-bold">${money(amount)}</span></div>`);exBox.lastElementChild.firstElementChild.textContent=name;});
+        if(!defs.some(x=>Number(x[1]||0)>0)) exBox.innerHTML='<div class="text-secondary">本月無費用支出</div>';
+        document.getElementById('monthlyPartners').textContent=data.partners&&data.partners.length?data.partners.join('、'):'無資料';
+    }
+
+    function exportReportToImage(evt) {
+        const element=document.getElementById('reportCaptureArea'); const btn=evt.currentTarget; const originalText=btn.innerHTML; const mode=document.getElementById('reportModeSelect').value;
+        btn.innerHTML='⏳ 生成中...';btn.disabled=true;
+        html2canvas(element,{useCORS:true,backgroundColor:'#ffffff',scale:2}).then(canvas=>{const link=document.createElement('a');const target=mode==='daily'?document.getElementById('reportDateInput').value:document.getElementById('reportMonthInput').value;link.download=`${storeDisplayName}_${target}_${mode==='daily'?'日報':'月報'}.png`;link.href=canvas.toDataURL('image/png');link.click();btn.innerHTML=originalText;btn.disabled=false;}).catch(()=>{alert('❌ 截圖失敗');btn.innerHTML=originalText;btn.disabled=false;});
+    }
+
+    async function loadAuditLogs() {
+        const input=document.getElementById('auditDateInput'); if(!input.value) input.value=localDateString();
+        const res=await fetch(`/api/audit_logs?date=${input.value}`); const data=await res.json();
+        const body=document.getElementById('auditLogBody'); body.innerHTML='';
+        (data||[]).forEach(log=>{const tr=document.createElement('tr');const t=document.createElement('td');t.setAttribute('data-label','時間');t.className='small text-secondary';t.textContent=(log.created_at||'').slice(11);const p=document.createElement('td');p.setAttribute('data-label','人員');p.innerHTML='<span class="badge bg-pink"></span>';p.firstElementChild.textContent=log.partner_name||'未知';const a=document.createElement('td');a.setAttribute('data-label','操作');a.innerHTML='<span class="badge bg-dark audit-action-badge"></span>';a.firstElementChild.textContent=log.action||'';const d=document.createElement('td');d.setAttribute('data-label','內容');d.textContent=log.detail||'';tr.append(t,p,a,d);body.appendChild(tr)});
+        if(!(data||[]).length) body.innerHTML='<tr><td colspan="4" class="text-center text-secondary py-4">當日尚無操作紀錄</td></tr>';
+    }
 
     function formatHandwrittenName(rawName) {
         let name = rawName.trim(); 
@@ -1468,8 +1538,9 @@
         const originalText = btn.innerHTML; btn.innerHTML = "⏳ 繪製中..."; btn.disabled = true;
         try {
             const mode = document.getElementById('reportModeSelect').value;
-            const date = mode === 'daily' ? document.getElementById('reportDateInput').value : document.getElementById('reportMonthInput').value;
-            const res = await fetch(`/api/report?mode=${mode}&date=${date}`); const data = await res.json();
+            if (mode !== 'daily') { alert('手寫報表保留給日報使用；月報請使用「匯出報表」。'); btn.innerHTML=originalText; btn.disabled=false; return; }
+            const date = document.getElementById('reportDateInput').value;
+            const res = await fetch(`/api/report?mode=daily&date=${date}`); const data = await res.json();
             
             let rawDate = document.getElementById('reportDateInput').value || localDateString();
             const fileDateStr = rawDate.replace(/-/g, '.'); const dateObj = new Date(rawDate + 'T12:00:00'); const weekDays = ["日", "一", "二", "三", "四", "五", "六"]; 
