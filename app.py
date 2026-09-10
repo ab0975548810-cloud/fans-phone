@@ -102,14 +102,15 @@ def require_auth(f):
     return decorated_function
 
 
-def is_manager():
-    return bool(session.get("manager_unlocked"))
+def current_actor():
+    return (session.get("partner_name") or "未知").strip() or "未知"
 
 
-def require_manager():
-    if not is_manager():
-        return jsonify({"message": "⛔ 權限不足，請先解鎖主管模式"}), 403
-    return None
+def log_action(cursor, action, detail=""):
+    cursor.execute(
+        "INSERT INTO audit_logs (created_at, partner_name, action, detail) VALUES (?, ?, ?, ?)",
+        (now_tw().strftime("%Y-%m-%d %H:%M:%S"), current_actor(), str(action), str(detail or "")),
+    )
 
 
 def init_db():
@@ -191,6 +192,15 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                partner_name TEXT NOT NULL,
+                action TEXT NOT NULL,
+                detail TEXT DEFAULT ''
             )
         """)
         cursor.execute("""
@@ -349,11 +359,10 @@ def setup_status():
 def setup_store():
     data = request.get_json() or {}
     store_name = str(data.get("store_name", "")).strip()
-    manager_pin = str(data.get("manager_pin", "")).strip()
     partner_name = str(data.get("partner_name", "")).strip()
     partner_pin = str(data.get("partner_pin", "")).strip()
-    if not store_name or len(manager_pin) < 4 or not partner_name or len(partner_pin) < 4:
-        return jsonify({"message": "店名必填，主管與員工 PIN 至少 4 碼"}), 400
+    if not store_name or not partner_name or len(partner_pin) < 4:
+        return jsonify({"message": "店名與第一位使用者必填，個人 PIN 至少 4 碼"}), 400
 
     conn = get_db_connection()
     try:
@@ -362,22 +371,21 @@ def setup_store():
             return jsonify({"message": "系統已完成初始化"}), 409
         set_setting(cursor, "store_name", store_name)
         set_setting(cursor, "report_title", "營業報表總覽")
-        set_setting(cursor, "manager_pin_hash", generate_password_hash(manager_pin))
         set_setting(cursor, "setup_completed", "1")
         cursor.execute(
             "INSERT INTO partners (name, password_hash) VALUES (?, ?)",
             (partner_name, generate_password_hash(partner_pin)),
         )
         partner_id = cursor.lastrowid
-        conn.commit()
         session.clear()
         session["partner_id"] = partner_id
         session["partner_name"] = partner_name
-        session["manager_unlocked"] = True
+        log_action(cursor, "首次設定", f"建立店家：{store_name}")
+        conn.commit()
         return jsonify({"status": "success", "partner": partner_name, "store_name": store_name})
     except sqlite3.IntegrityError:
         conn.rollback()
-        return jsonify({"message": "員工名稱已存在"}), 400
+        return jsonify({"message": "使用者名稱已存在"}), 400
     finally:
         conn.close()
 
@@ -387,7 +395,6 @@ def auth_status():
     return jsonify({
         "logged_in": bool(session.get("partner_id")),
         "partner": session.get("partner_name", ""),
-        "manager": bool(session.get("manager_unlocked")),
     })
 
 
@@ -409,39 +416,27 @@ def auth_login():
             session.clear()
             session["partner_id"] = user["id"]
             session["partner_name"] = user["name"]
-            session["manager_unlocked"] = False
+            try:
+                log_action(cursor, "登入", "登入 POS")
+                conn.commit()
+            except Exception:
+                conn.rollback()
             return jsonify({"status": "success", "partner": user["name"]})
         return jsonify({"status": "error", "message": "PIN 錯誤"}), 401
     finally:
         conn.close()
 
 
-@app.route("/api/auth/manager", methods=["POST"])
-@require_auth
-def auth_manager():
-    data = request.get_json() or {}
-    pwd = str(data.get("password", "")).strip()
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-        pin_hash = get_setting(cursor, "manager_pin_hash", "")
-        if pin_hash and check_password_hash(pin_hash, pwd):
-            session["manager_unlocked"] = True
-            return jsonify({"status": "success"})
-        return jsonify({"status": "error", "message": "主管 PIN 錯誤"}), 401
-    finally:
-        conn.close()
-
-
-@app.route("/api/auth/manager/lock", methods=["POST"])
-@require_auth
-def lock_manager():
-    session["manager_unlocked"] = False
-    return jsonify({"status": "success"})
-
-
 @app.route("/api/auth/logout", methods=["POST"])
 def auth_logout():
+    if session.get("partner_id"):
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            log_action(cursor, "登出", "登出 POS")
+            conn.commit()
+        finally:
+            conn.close()
     session.clear()
     return jsonify({"status": "success"})
 
@@ -457,22 +452,14 @@ def settings_api():
                 "store_name": get_setting(cursor, "store_name", "我的配件 POS"),
                 "report_title": get_setting(cursor, "report_title", "營業報表總覽"),
             })
-
-        denied = require_manager()
-        if denied:
-            return denied
         data = request.get_json() or {}
         store_name = str(data.get("store_name", "")).strip()
         report_title = str(data.get("report_title", "")).strip()
-        new_manager_pin = str(data.get("new_manager_pin", "")).strip()
         if store_name:
             set_setting(cursor, "store_name", store_name)
         if report_title:
             set_setting(cursor, "report_title", report_title)
-        if new_manager_pin:
-            if len(new_manager_pin) < 4:
-                return jsonify({"message": "主管 PIN 至少 4 碼"}), 400
-            set_setting(cursor, "manager_pin_hash", generate_password_hash(new_manager_pin))
+        log_action(cursor, "系統設定", f"店名：{store_name or get_setting(cursor, 'store_name', '')}；報表：{report_title or get_setting(cursor, 'report_title', '')}")
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -488,16 +475,13 @@ def payment_methods_api():
         if request.method == "GET":
             rows = cursor.execute("SELECT id, name FROM payment_methods ORDER BY id ASC").fetchall()
             return jsonify([dict(r) for r in rows])
-
-        denied = require_manager()
-        if denied:
-            return denied
         if request.method == "POST":
             name = str((request.get_json() or {}).get("name", "")).strip()
             if not name:
                 return jsonify({"message": "付款方式不可空白"}), 400
             try:
                 cursor.execute("INSERT INTO payment_methods (name) VALUES (?)", (name,))
+                log_action(cursor, "新增付款方式", name)
                 conn.commit()
                 return jsonify({"status": "success"})
             except sqlite3.IntegrityError:
@@ -505,7 +489,9 @@ def payment_methods_api():
         method_id = request.args.get("id")
         if cursor.execute("SELECT COUNT(*) FROM payment_methods").fetchone()[0] <= 1:
             return jsonify({"message": "至少保留一種付款方式"}), 400
+        old = cursor.execute("SELECT name FROM payment_methods WHERE id=?", (method_id,)).fetchone()
         cursor.execute("DELETE FROM payment_methods WHERE id=?", (method_id,))
+        log_action(cursor, "刪除付款方式", old["name"] if old else str(method_id))
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -523,9 +509,6 @@ def handle_partners():
 
         if not session.get("partner_id"):
             return jsonify({"message": "請先登入"}), 401
-        denied = require_manager()
-        if denied:
-            return denied
 
         if request.method == "POST":
             data = request.get_json() or {}
@@ -533,7 +516,7 @@ def handle_partners():
             name = str(data.get("name", "")).strip()
             pin = str(data.get("password", "")).strip()
             if not name:
-                return jsonify({"message": "員工名稱不可空白"}), 400
+                return jsonify({"message": "使用者名稱不可空白"}), 400
             try:
                 if pid:
                     if pin:
@@ -547,20 +530,23 @@ def handle_partners():
                         cursor.execute("UPDATE partners SET name=? WHERE id=?", (name, pid))
                 else:
                     if len(pin) < 4:
-                        return jsonify({"message": "新增員工時 PIN 至少 4 碼"}), 400
+                        return jsonify({"message": "新增使用者時 PIN 至少 4 碼"}), 400
                     cursor.execute(
                         "INSERT INTO partners (name, password_hash) VALUES (?, ?)",
                         (name, generate_password_hash(pin)),
                     )
+                log_action(cursor, "使用者管理", f"{'編輯' if pid else '新增'}：{name}")
                 conn.commit()
                 return jsonify({"status": "success"})
             except sqlite3.IntegrityError:
-                return jsonify({"message": "員工名稱已存在"}), 400
+                return jsonify({"message": "使用者名稱已存在"}), 400
 
         pid = request.args.get("id")
         if cursor.execute("SELECT COUNT(*) FROM partners").fetchone()[0] <= 1:
-            return jsonify({"message": "至少保留一位員工"}), 400
+            return jsonify({"message": "至少保留一位使用者"}), 400
+        old = cursor.execute("SELECT name FROM partners WHERE id=?", (pid,)).fetchone()
         cursor.execute("DELETE FROM partners WHERE id=?", (pid,))
+        log_action(cursor, "刪除使用者", old["name"] if old else str(pid))
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -594,10 +580,6 @@ def handle_products():
                 ).fetchall()]
                 result.append(d)
             return jsonify(result)
-
-        denied = require_manager()
-        if denied:
-            return denied
         data = request.get_json() or {}
         name = str(data.get("name", "")).strip()
         if not name:
@@ -628,6 +610,7 @@ def handle_products():
                     "INSERT INTO products (name, cost, price, stock, threshold, track_stock, price_mode) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (name, cost, price, stock, threshold, track_stock, price_mode),
                 )
+            log_action(cursor, "商品設定", f"{'編輯' if data.get('id') else '新增'}：{name}")
             conn.commit()
             return jsonify({"status": "success"})
 
@@ -636,8 +619,10 @@ def handle_products():
         restocked = cursor.execute("SELECT 1 FROM restock_logs WHERE product_id=? LIMIT 1", (pid,)).fetchone()
         if used or restocked:
             return jsonify({"message": "此商品已有歷史單據或進貨紀錄，為保留資料完整性不可永久刪除；可改名或停用庫存追蹤。"}), 409
+        old = cursor.execute("SELECT name FROM products WHERE id=?", (pid,)).fetchone()
         cursor.execute("DELETE FROM product_variants WHERE product_id=?", (pid,))
         cursor.execute("DELETE FROM products WHERE id=?", (pid,))
+        log_action(cursor, "刪除商品", old["name"] if old else str(pid))
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -655,10 +640,6 @@ def handle_variants():
         if request.method == "GET":
             rows = cursor.execute("SELECT * FROM product_variants WHERE product_id=? ORDER BY id ASC", (pid,)).fetchall()
             return jsonify({"product_id": pid, "variants": [dict(v) for v in rows]})
-
-        denied = require_manager()
-        if denied:
-            return denied
         if not product or not product["track_stock"]:
             return jsonify({"message": "此商品未啟用庫存追蹤，不能建立細項"}), 400
 
@@ -675,12 +656,15 @@ def handle_variants():
                     (pid, name, stock, threshold),
                 )
             recalc_product_stock(cursor, pid)
+            log_action(cursor, "新增商品細項", f"商品 ID {pid}：{', '.join(names)}")
             conn.commit()
             return jsonify({"status": "success"})
 
         vid = request.args.get("id")
+        old = cursor.execute("SELECT name FROM product_variants WHERE id=? AND product_id=?", (vid, pid)).fetchone()
         cursor.execute("DELETE FROM product_variants WHERE id=? AND product_id=?", (vid, pid))
         recalc_product_stock(cursor, pid)
+        log_action(cursor, "刪除商品細項", old["name"] if old else f"ID {vid}")
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -690,9 +674,6 @@ def handle_variants():
 @app.route("/api/variants/bulk", methods=["POST"])
 @require_auth
 def bulk_save_variants():
-    denied = require_manager()
-    if denied:
-        return denied
     data = request.get_json() or {}
     pid = int(data.get("product_id") or 0)
     conn = get_db_connection()
@@ -704,6 +685,7 @@ def bulk_save_variants():
                 (str(v["name"]).strip(), max(0, int(v["stock"])), max(0, int(v["threshold"])), v["id"], pid),
             )
         recalc_product_stock(cursor, pid)
+        log_action(cursor, "批次修改商品細項", f"商品 ID {pid}")
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -713,9 +695,6 @@ def bulk_save_variants():
 @app.route("/api/variants/copy", methods=["POST"])
 @require_auth
 def copy_variants():
-    denied = require_manager()
-    if denied:
-        return denied
     data = request.get_json() or {}
     src_id, tgt_id = data.get("source_id"), data.get("target_id")
     conn = get_db_connection()
@@ -731,6 +710,7 @@ def copy_variants():
                 (tgt_id, v["name"], v["threshold"]),
             )
         recalc_product_stock(cursor, tgt_id)
+        log_action(cursor, "複製商品細項", f"來源 {src_id} → 目標 {tgt_id}")
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -786,10 +766,6 @@ def handle_restock():
                 })
             return jsonify(list(grouped.values()))
 
-        denied = require_manager()
-        if denied:
-            return denied
-
         if request.method == "POST":
             data = request.get_json() or {}
             items = data.get("items", [])
@@ -822,6 +798,7 @@ def handle_restock():
                     "INSERT INTO restock_logs (batch_no, date, partner_name, product_id, variant_id, product_name, quantity, cost, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
                     (batch_no, now_str, partner, pid, vid, full_name, qty, p["cost"]),
                 )
+            log_action(cursor, "進貨", f"{batch_no}；{len(items)} 個品項")
             conn.commit()
             return jsonify({"status": "success", "batch_no": batch_no})
 
@@ -900,6 +877,7 @@ def _restock_action(conn, batch_nos, action):
                     cursor, batch_no,
                     deleted=1, voided_at=now_str, voided_by=actor,
                 )
+                log_action(cursor, "作廢進貨單", batch_no)
             elif action == "recover" and current_deleted:
                 for row in rows:
                     pid, vid, qty = row["product_id"], row["variant_id"], row["quantity"]
@@ -910,6 +888,7 @@ def _restock_action(conn, batch_nos, action):
                     cursor, batch_no,
                     deleted=0, restored_at=now_str, restored_by=actor,
                 )
+                log_action(cursor, "復原進貨單", batch_no)
         conn.commit()
         return jsonify({"status": "success"})
     except ValueError as e:
@@ -923,9 +902,6 @@ def _restock_action(conn, batch_nos, action):
 @app.route("/api/restock/batch_action", methods=["POST"])
 @require_auth
 def restock_batch_action():
-    denied = require_manager()
-    if denied:
-        return denied
     data = request.get_json() or {}
     action = data.get("action")
     if action not in {"trash", "recover"}:
@@ -943,9 +919,6 @@ def restock_batch_action():
 @app.route("/api/restock/edit", methods=["POST"])
 @require_auth
 def edit_restock_batch():
-    denied = require_manager()
-    if denied:
-        return denied
     data = request.get_json() or {}
     batch_no = str(data.get("batch_no", ""))
     new_items = data.get("items", [])
@@ -1017,6 +990,7 @@ def edit_restock_batch():
         if inserted == 0:
             conn.rollback()
             return jsonify({"message": "沒有可儲存的進貨品項"}), 400
+        log_action(cursor, "編輯進貨單", batch_no)
         conn.commit()
         return jsonify({"status": "success", "batch_no": batch_no})
     except (TypeError, ValueError) as e:
@@ -1043,10 +1017,6 @@ def handle_rent():
             if row:
                 return jsonify(dict(row))
             return jsonify({"amount": 0, "rent_base": 0, "cleaning": 0, "electricity": 0, "other": 0})
-
-        denied = require_manager()
-        if denied:
-            return denied
         data = request.get_json() or {}
         try:
             rb = max(0, float(data.get("rent_base", 0) or 0))
@@ -1063,6 +1033,7 @@ def handle_rent():
               amount=excluded.amount, rent_base=excluded.rent_base, cleaning=excluded.cleaning,
               electricity=excluded.electricity, other=excluded.other
         """, (date_str, total, rb, cl, el, ot))
+        log_action(cursor, "費用支出", f"{date_str}；總計 ${total:g}")
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -1179,6 +1150,7 @@ def handle_orders():
                     "INSERT INTO order_items (order_id, product_id, name, quantity, price_at_sale, cost_at_sale, variant_id, track_stock_at_sale) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     [(order_id, *row) for row in normalized],
                 )
+                log_action(cursor, "結帳", f"ORD-{order_id:05d}；${total_revenue:g}")
                 conn.commit()
                 return jsonify({"status": "success", "invoice_no": f"ORD-{order_id:05d}"})
             except (ValueError, TypeError) as e:
@@ -1187,10 +1159,6 @@ def handle_orders():
             except Exception:
                 conn.rollback()
                 raise
-
-        denied = require_manager()
-        if denied:
-            return denied
         order_id = request.args.get("id")
         conn.execute("BEGIN IMMEDIATE")
         order = cursor.execute("SELECT is_void FROM orders WHERE id=?", (order_id,)).fetchone()
@@ -1211,8 +1179,9 @@ def handle_orders():
                     cursor.execute("UPDATE product_variants SET stock=stock+? WHERE id=?", (item["quantity"], item["variant_id"]))
         cursor.execute(
             "UPDATE orders SET is_void=1, voided_at=?, voided_by=? WHERE id=?",
-            (now_tw().strftime("%Y-%m-%d %H:%M:%S"), session.get("partner_name", ""), order_id),
+            (now_tw().strftime("%Y-%m-%d %H:%M:%S"), current_actor(), order_id),
         )
+        log_action(cursor, "作廢銷售單", f"ORD-{int(order_id):05d}")
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -1222,9 +1191,6 @@ def handle_orders():
 @app.route("/api/orders/edit", methods=["POST"])
 @require_auth
 def edit_order():
-    denied = require_manager()
-    if denied:
-        return denied
     data = request.get_json() or {}
     order_id = int(data.get("order_id") or 0)
     items = data.get("items", [])
@@ -1338,6 +1304,7 @@ def edit_order():
                 now_tw().strftime("%Y-%m-%d %H:%M:%S"), session.get("partner_name", ""), order_id,
             ),
         )
+        log_action(cursor, "編輯銷售單", f"ORD-{order_id:05d}；修改後 ${total_revenue:g}")
         conn.commit()
         return jsonify({"status": "success", "total_revenue": total_revenue})
     except (TypeError, ValueError) as e:
@@ -1355,9 +1322,6 @@ def edit_order():
 @app.route("/api/orders/update_date", methods=["POST"])
 @require_auth
 def update_order_date():
-    denied = require_manager()
-    if denied:
-        return denied
     data = request.get_json() or {}
     order_id = data.get("order_id")
     new_date = str(data.get("new_date", "")).strip()
@@ -1367,10 +1331,12 @@ def update_order_date():
         return jsonify({"message": "日期格式錯誤"}), 400
     conn = get_db_connection()
     try:
-        conn.execute(
+        cursor = conn.cursor()
+        cursor.execute(
             "UPDATE orders SET date=?, edited_at=?, edited_by=?, edit_count=COALESCE(edit_count,0)+1 WHERE id=? AND is_void=0",
-            (new_date, now_tw().strftime("%Y-%m-%d %H:%M:%S"), session.get("partner_name", ""), order_id),
+            (new_date, now_tw().strftime("%Y-%m-%d %H:%M:%S"), current_actor(), order_id),
         )
+        log_action(cursor, "修改銷售日期", f"ORD-{int(order_id):05d} → {new_date}")
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -1380,9 +1346,6 @@ def update_order_date():
 @app.route("/api/orders/daily", methods=["DELETE"])
 @require_auth
 def void_daily_orders():
-    denied = require_manager()
-    if denied:
-        return denied
     date_str = request.args.get("date")
     if not date_str:
         return jsonify({"message": "缺少日期"}), 400
@@ -1405,11 +1368,27 @@ def void_daily_orders():
                 "UPDATE orders SET is_void=1, voided_at=?, voided_by=? WHERE id=?",
                 (now_tw().strftime("%Y-%m-%d %H:%M:%S"), session.get("partner_name", ""), row["id"]),
             )
+        log_action(cursor, "批量作廢銷售單", f"{date_str}；共 {len(orders)} 筆")
         conn.commit()
         return jsonify({"status": "success", "voided_count": len(orders)})
     except Exception:
         conn.rollback()
         raise
+    finally:
+        conn.close()
+
+
+@app.route("/api/audit_logs", methods=["GET"])
+@require_auth
+def audit_logs_api():
+    date_str = request.args.get("date") or today_tw()
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, created_at, partner_name, action, detail FROM audit_logs WHERE created_at LIKE ? ORDER BY id DESC LIMIT 500",
+            (f"{date_str}%",),
+        ).fetchall()
+        return jsonify([dict(r) for r in rows])
     finally:
         conn.close()
 
@@ -1449,10 +1428,33 @@ def handle_report():
             f"SELECT payment_method AS name, SUM(total_revenue) AS total FROM orders WHERE date {op} ? AND is_void=0 GROUP BY payment_method",
             (query_date,),
         ).fetchall()
-        partners_rows = cursor.execute(
-            f"SELECT DISTINCT partner_name FROM orders WHERE date {op} ? AND is_void=0 AND partner_name!=''",
-            (query_date,),
-        ).fetchall()
+        if mode == "daily":
+            partner_names = {r["partner_name"] for r in cursor.execute(
+                "SELECT DISTINCT partner_name FROM audit_logs WHERE created_at LIKE ? AND partner_name!=''",
+                (f"{target}%",),
+            ).fetchall()}
+            partner_names.update(r["partner_name"] for r in cursor.execute(
+                "SELECT DISTINCT partner_name FROM orders WHERE date=? AND partner_name!=''",
+                (target,),
+            ).fetchall())
+            partner_names.update(r["partner_name"] for r in cursor.execute(
+                "SELECT DISTINCT partner_name FROM restock_logs WHERE date LIKE ? AND partner_name!=''",
+                (f"{target}%",),
+            ).fetchall())
+        else:
+            partner_names = {r["partner_name"] for r in cursor.execute(
+                "SELECT DISTINCT partner_name FROM audit_logs WHERE created_at LIKE ? AND partner_name!=''",
+                (f"{target}-%",),
+            ).fetchall()}
+            partner_names.update(r["partner_name"] for r in cursor.execute(
+                "SELECT DISTINCT partner_name FROM orders WHERE date LIKE ? AND partner_name!=''",
+                (f"{target}-%",),
+            ).fetchall())
+            partner_names.update(r["partner_name"] for r in cursor.execute(
+                "SELECT DISTINCT partner_name FROM restock_logs WHERE date LIKE ? AND partner_name!=''",
+                (f"{target}-%",),
+            ).fetchall())
+        partner_names = sorted(partner_names)
         main_cats = cursor.execute(f"""
             SELECT p.name, SUM(oi.quantity) AS qty
             FROM order_items oi
@@ -1467,6 +1469,54 @@ def handle_report():
         revenue = float(summary["rev"] or 0)
         cost = float(summary["cos"] or 0)
         rent = float(rent_row["amount"] or 0)
+
+        daily_breakdown = []
+        top_products = []
+        best_day = None
+        open_days = 0
+        avg_daily_revenue = 0
+        if mode == "monthly":
+            sales_by_day = {
+                r["date"]: r for r in cursor.execute("""
+                    SELECT o.date, SUM(o.total_revenue) AS revenue, SUM(o.total_cost) AS cost, COUNT(*) AS orders_count
+                    FROM orders o
+                    WHERE o.date LIKE ? AND o.is_void=0
+                    GROUP BY o.date
+                    ORDER BY o.date ASC
+                """, (query_date,)).fetchall()
+            }
+            expense_by_day = {
+                r["date"]: float(r["amount"] or 0)
+                for r in cursor.execute(
+                    "SELECT date, amount FROM rent WHERE date LIKE ? ORDER BY date ASC",
+                    (query_date,),
+                ).fetchall()
+            }
+            all_dates = sorted(set(sales_by_day) | set(expense_by_day))
+            for day in all_dates:
+                r = sales_by_day.get(day)
+                day_rev = float(r["revenue"] or 0) if r else 0.0
+                day_cost = float(r["cost"] or 0) if r else 0.0
+                day_orders = int(r["orders_count"] or 0) if r else 0
+                day_exp = expense_by_day.get(day, 0.0)
+                daily_breakdown.append({
+                    "date": day,
+                    "revenue": day_rev,
+                    "cost": day_cost,
+                    "expenses": day_exp,
+                    "profit": day_rev - day_cost - day_exp,
+                    "orders_count": day_orders,
+                })
+            open_days = sum(1 for row in daily_breakdown if row["orders_count"] > 0)
+            avg_daily_revenue = revenue / open_days if open_days else 0
+            sales_days = [row for row in daily_breakdown if row["orders_count"] > 0]
+            if sales_days:
+                best_day = max(sales_days, key=lambda x: x["revenue"])
+            top_products = sorted(
+                [dict(r) for r in details],
+                key=lambda x: (float(x.get("total_sale") or 0), int(x.get("quantity") or 0)),
+                reverse=True,
+            )[:10]
         expenses = {
             "rent_base": float(rent_row["rent_base"] or 0),
             "cleaning": float(rent_row["cleaning"] or 0),
@@ -1484,7 +1534,12 @@ def handle_report():
             "details": [dict(r) for r in details],
             "main_categories": [dict(r) for r in main_cats],
             "payments": {r["name"]: r["total"] for r in pm_rows},
-            "partners": [r["partner_name"] for r in partners_rows],
+            "partners": partner_names,
+            "daily_breakdown": daily_breakdown,
+            "top_products": top_products,
+            "open_days": open_days,
+            "avg_daily_revenue": avg_daily_revenue,
+            "best_day": best_day,
         })
     finally:
         conn.close()
