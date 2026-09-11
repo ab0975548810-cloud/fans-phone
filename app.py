@@ -5,6 +5,7 @@ import shutil
 import threading
 import time
 import secrets
+import json
 from datetime import datetime
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -113,6 +114,86 @@ def log_action(cursor, action, detail=""):
     )
 
 
+def _is_cash_payment(name):
+    text = str(name or "").strip().lower()
+    return "現金" in text or text == "cash" or text.startswith("cash ")
+
+
+def _business_day_row(cursor, date_str):
+    return cursor.execute("SELECT * FROM business_days WHERE date=?", (date_str,)).fetchone()
+
+
+def _day_write_guard(cursor, date_str, require_open_today=False):
+    row = _business_day_row(cursor, date_str)
+    if row and row["status"] == "closed":
+        return f"{date_str} 已完成關帳；如需修改請先到『開／關班』重新開帳"
+    if require_open_today and date_str == today_tw() and not row:
+        return "今天尚未開班，請先到『開／關班』輸入備用金並開始營業"
+    return None
+
+
+def _expense_cash_total(row):
+    if not row:
+        return 0.0
+    total = 0.0
+    for amount_key, source_key in [
+        ("rent_base", "rent_base_source"),
+        ("cleaning", "cleaning_source"),
+        ("electricity", "electricity_source"),
+        ("other", "other_source"),
+    ]:
+        try:
+            if str(row[source_key] or "").lower() == "cash":
+                total += float(row[amount_key] or 0)
+        except (KeyError, IndexError):
+            pass
+    return total
+
+
+def _compute_day_summary(cursor, date_str, opening_cash=None):
+    summary = cursor.execute(
+        "SELECT COALESCE(SUM(total_revenue),0) AS revenue, COALESCE(SUM(total_cost),0) AS cost, COUNT(*) AS orders_count FROM orders WHERE date=? AND is_void=0",
+        (date_str,),
+    ).fetchone()
+    payment_rows = cursor.execute(
+        "SELECT payment_method AS name, COALESCE(SUM(total_revenue),0) AS total FROM orders WHERE date=? AND is_void=0 GROUP BY payment_method ORDER BY payment_method",
+        (date_str,),
+    ).fetchall()
+    payments = {r["name"]: float(r["total"] or 0) for r in payment_rows}
+    cash_sales = sum(amount for name, amount in payments.items() if _is_cash_payment(name))
+    expense_row = cursor.execute("SELECT * FROM rent WHERE date=?", (date_str,)).fetchone()
+    expenses = float(expense_row["amount"] or 0) if expense_row else 0.0
+    cash_expenses = _expense_cash_total(expense_row)
+    day_row = _business_day_row(cursor, date_str)
+    if opening_cash is None:
+        opening_cash = float(day_row["opening_cash"] or 0) if day_row else 0.0
+    revenue = float(summary["revenue"] or 0)
+    cost = float(summary["cost"] or 0)
+    expected_cash = float(opening_cash or 0) + cash_sales - cash_expenses
+    partner_names = {r["partner_name"] for r in cursor.execute(
+        "SELECT DISTINCT partner_name FROM audit_logs WHERE created_at LIKE ? AND partner_name!=''",
+        (f"{date_str}%",),
+    ).fetchall()}
+    partner_names.update(r["partner_name"] for r in cursor.execute(
+        "SELECT DISTINCT partner_name FROM orders WHERE date=? AND partner_name!=''",
+        (date_str,),
+    ).fetchall())
+    return {
+        "date": date_str,
+        "revenue": revenue,
+        "cost": cost,
+        "expenses": expenses,
+        "net_profit": revenue - cost - expenses,
+        "orders_count": int(summary["orders_count"] or 0),
+        "payments": payments,
+        "cash_sales": cash_sales,
+        "cash_expenses": cash_expenses,
+        "opening_cash": float(opening_cash or 0),
+        "expected_cash": expected_cash,
+        "partners": sorted(partner_names),
+    }
+
+
 def init_db():
     conn = get_db_connection()
     try:
@@ -143,7 +224,11 @@ def init_db():
                 rent_base REAL DEFAULT 0,
                 cleaning REAL DEFAULT 0,
                 electricity REAL DEFAULT 0,
-                other REAL DEFAULT 0
+                other REAL DEFAULT 0,
+                rent_base_source TEXT NOT NULL DEFAULT 'owner',
+                cleaning_source TEXT NOT NULL DEFAULT 'owner',
+                electricity_source TEXT NOT NULL DEFAULT 'owner',
+                other_source TEXT NOT NULL DEFAULT 'owner'
             )
         """)
         cursor.execute("""
@@ -204,6 +289,32 @@ def init_db():
             )
         """)
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS business_days (
+                date TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'open',
+                opening_cash REAL NOT NULL DEFAULT 0,
+                opened_at TEXT DEFAULT NULL,
+                opened_by TEXT DEFAULT NULL,
+                closed_at TEXT DEFAULT NULL,
+                closed_by TEXT DEFAULT NULL,
+                counted_cash REAL DEFAULT NULL,
+                expected_cash REAL DEFAULT NULL,
+                cash_difference REAL DEFAULT NULL,
+                difference_note TEXT DEFAULT '',
+                cash_sales REAL NOT NULL DEFAULT 0,
+                cash_expenses REAL NOT NULL DEFAULT 0,
+                revenue REAL NOT NULL DEFAULT 0,
+                cost REAL NOT NULL DEFAULT 0,
+                expenses REAL NOT NULL DEFAULT 0,
+                net_profit REAL NOT NULL DEFAULT 0,
+                payment_summary TEXT DEFAULT '{}',
+                reopened_at TEXT DEFAULT NULL,
+                reopened_by TEXT DEFAULT NULL,
+                reopen_reason TEXT DEFAULT '',
+                reopen_count INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS restock_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 batch_no TEXT DEFAULT '',
@@ -230,6 +341,16 @@ def init_db():
             cursor.execute("ALTER TABLE products ADD COLUMN track_stock INTEGER NOT NULL DEFAULT 1")
         if "price_mode" not in product_cols:
             cursor.execute("ALTER TABLE products ADD COLUMN price_mode TEXT NOT NULL DEFAULT 'fixed'")
+
+        rent_cols = {r[1] for r in cursor.execute("PRAGMA table_info(rent)").fetchall()}
+        for col, ddl in {
+            "rent_base_source": "ALTER TABLE rent ADD COLUMN rent_base_source TEXT NOT NULL DEFAULT 'owner'",
+            "cleaning_source": "ALTER TABLE rent ADD COLUMN cleaning_source TEXT NOT NULL DEFAULT 'owner'",
+            "electricity_source": "ALTER TABLE rent ADD COLUMN electricity_source TEXT NOT NULL DEFAULT 'owner'",
+            "other_source": "ALTER TABLE rent ADD COLUMN other_source TEXT NOT NULL DEFAULT 'owner'",
+        }.items():
+            if col not in rent_cols:
+                cursor.execute(ddl)
 
         order_cols = {r[1] for r in cursor.execute("PRAGMA table_info(orders)").fetchall()}
         if "created_at" not in order_cols:
@@ -1005,6 +1126,172 @@ def edit_restock_batch():
         conn.close()
 
 
+@app.route("/api/business_day", methods=["GET"])
+@require_auth
+def business_day_status():
+    date_str = str(request.args.get("date") or today_tw()).strip()
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"message": "日期格式錯誤"}), 400
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        row = _business_day_row(cursor, date_str)
+        summary = _compute_day_summary(cursor, date_str)
+        day = dict(row) if row else None
+        if day and day.get("payment_summary"):
+            try:
+                day["payment_summary"] = json.loads(day["payment_summary"])
+            except Exception:
+                day["payment_summary"] = {}
+        return jsonify({
+            "status": day["status"] if day else "not_opened",
+            "day": day,
+            "summary": summary,
+        })
+    finally:
+        conn.close()
+
+
+@app.route("/api/business_day/open", methods=["POST"])
+@require_auth
+def business_day_open():
+    data = request.get_json() or {}
+    date_str = str(data.get("date") or today_tw()).strip()
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+        opening_cash = max(0.0, float(data.get("opening_cash", 0) or 0))
+    except (ValueError, TypeError):
+        return jsonify({"message": "日期或備用金格式錯誤"}), 400
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        existing = _business_day_row(cursor, date_str)
+        if existing:
+            if existing["status"] == "closed":
+                return jsonify({"message": "此日已關帳；如需修改請使用『重新開帳』"}), 409
+            return jsonify({"message": "此日已經開班"}), 409
+        now_str = now_tw().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute(
+            "INSERT INTO business_days (date,status,opening_cash,opened_at,opened_by) VALUES (?, 'open', ?, ?, ?)",
+            (date_str, opening_cash, now_str, current_actor()),
+        )
+        log_action(cursor, "開班", f"{date_str}；備用金 ${opening_cash:g}")
+        conn.commit()
+        return jsonify({"status": "success"})
+    finally:
+        conn.close()
+
+
+@app.route("/api/business_day/opening_cash", methods=["POST"])
+@require_auth
+def business_day_update_opening_cash():
+    data = request.get_json() or {}
+    date_str = str(data.get("date") or today_tw()).strip()
+    try:
+        opening_cash = max(0.0, float(data.get("opening_cash", 0) or 0))
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return jsonify({"message": "日期或備用金格式錯誤"}), 400
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        day = _business_day_row(cursor, date_str)
+        if not day:
+            return jsonify({"message": "此日尚未開班"}), 404
+        if day["status"] != "open":
+            return jsonify({"message": "已關帳日期不可直接調整備用金，請先重新開帳"}), 409
+        old = float(day["opening_cash"] or 0)
+        cursor.execute("UPDATE business_days SET opening_cash=? WHERE date=?", (opening_cash, date_str))
+        log_action(cursor, "調整備用金", f"{date_str}；${old:g} → ${opening_cash:g}")
+        conn.commit()
+        return jsonify({"status": "success"})
+    finally:
+        conn.close()
+
+
+@app.route("/api/business_day/close", methods=["POST"])
+@require_auth
+def business_day_close():
+    data = request.get_json() or {}
+    date_str = str(data.get("date") or today_tw()).strip()
+    note = str(data.get("difference_note") or "").strip()
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+        counted_cash = max(0.0, float(data.get("counted_cash", 0) or 0))
+    except (ValueError, TypeError):
+        return jsonify({"message": "日期或實際現金格式錯誤"}), 400
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        conn.execute("BEGIN IMMEDIATE")
+        day = _business_day_row(cursor, date_str)
+        if not day:
+            conn.rollback()
+            return jsonify({"message": "此日尚未開班，請先輸入備用金開班"}), 409
+        if day["status"] == "closed":
+            conn.rollback()
+            return jsonify({"message": "此日已完成關帳"}), 409
+        summary = _compute_day_summary(cursor, date_str, float(day["opening_cash"] or 0))
+        difference = counted_cash - summary["expected_cash"]
+        if abs(difference) >= 0.01 and not note:
+            conn.rollback()
+            return jsonify({"message": "實際現金與系統應有現金有差額，請填寫差異原因"}), 400
+        now_str = now_tw().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            UPDATE business_days SET
+                status='closed', closed_at=?, closed_by=?, counted_cash=?, expected_cash=?, cash_difference=?, difference_note=?,
+                cash_sales=?, cash_expenses=?, revenue=?, cost=?, expenses=?, net_profit=?, payment_summary=?
+            WHERE date=?
+        """, (
+            now_str, current_actor(), counted_cash, summary["expected_cash"], difference, note,
+            summary["cash_sales"], summary["cash_expenses"], summary["revenue"], summary["cost"],
+            summary["expenses"], summary["net_profit"], json.dumps(summary["payments"], ensure_ascii=False), date_str,
+        ))
+        log_action(cursor, "關帳", f"{date_str}；應有現金 ${summary['expected_cash']:g}；實盤 ${counted_cash:g}；差額 ${difference:g}")
+        conn.commit()
+        return jsonify({"status": "success", "difference": difference, "expected_cash": summary["expected_cash"]})
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@app.route("/api/business_day/reopen", methods=["POST"])
+@require_auth
+def business_day_reopen():
+    data = request.get_json() or {}
+    date_str = str(data.get("date") or "").strip()
+    reason = str(data.get("reason") or "").strip()
+    if not reason:
+        return jsonify({"message": "重新開帳必須填寫原因"}), 400
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"message": "日期格式錯誤"}), 400
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        day = _business_day_row(cursor, date_str)
+        if not day:
+            return jsonify({"message": "找不到此營業日"}), 404
+        if day["status"] != "closed":
+            return jsonify({"message": "此日目前不是已關帳狀態"}), 409
+        now_str = now_tw().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            UPDATE business_days SET status='open', reopened_at=?, reopened_by=?, reopen_reason=?, reopen_count=COALESCE(reopen_count,0)+1
+            WHERE date=?
+        """, (now_str, current_actor(), reason, date_str))
+        log_action(cursor, "重新開帳", f"{date_str}；原因：{reason}")
+        conn.commit()
+        return jsonify({"status": "success"})
+    finally:
+        conn.close()
+
+
 @app.route("/api/rent", methods=["GET", "POST"])
 @require_auth
 def handle_rent():
@@ -1016,7 +1303,13 @@ def handle_rent():
             row = cursor.execute("SELECT * FROM rent WHERE date=?", (date_str,)).fetchone()
             if row:
                 return jsonify(dict(row))
-            return jsonify({"amount": 0, "rent_base": 0, "cleaning": 0, "electricity": 0, "other": 0})
+            return jsonify({
+                "amount": 0, "rent_base": 0, "cleaning": 0, "electricity": 0, "other": 0,
+                "rent_base_source": "owner", "cleaning_source": "owner", "electricity_source": "owner", "other_source": "owner",
+            })
+        guard = _day_write_guard(cursor, date_str, require_open_today=True)
+        if guard:
+            return jsonify({"message": guard}), 409
         data = request.get_json() or {}
         try:
             rb = max(0, float(data.get("rent_base", 0) or 0))
@@ -1025,15 +1318,26 @@ def handle_rent():
             ot = max(0, float(data.get("other", 0) or 0))
         except (TypeError, ValueError):
             return jsonify({"message": "費用格式錯誤"}), 400
+        allowed_sources = {"cash", "linepay", "transfer", "owner"}
+        rbs = str(data.get("rent_base_source") or "owner").lower()
+        cls = str(data.get("cleaning_source") or "owner").lower()
+        els = str(data.get("electricity_source") or "owner").lower()
+        ots = str(data.get("other_source") or "owner").lower()
+        if any(x not in allowed_sources for x in [rbs, cls, els, ots]):
+            return jsonify({"message": "費用付款來源格式錯誤"}), 400
         total = rb + cl + el + ot
         cursor.execute("""
-            INSERT INTO rent (date, amount, rent_base, cleaning, electricity, other)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO rent (date, amount, rent_base, cleaning, electricity, other,
+                              rent_base_source, cleaning_source, electricity_source, other_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
               amount=excluded.amount, rent_base=excluded.rent_base, cleaning=excluded.cleaning,
-              electricity=excluded.electricity, other=excluded.other
-        """, (date_str, total, rb, cl, el, ot))
-        log_action(cursor, "費用支出", f"{date_str}；總計 ${total:g}")
+              electricity=excluded.electricity, other=excluded.other,
+              rent_base_source=excluded.rent_base_source, cleaning_source=excluded.cleaning_source,
+              electricity_source=excluded.electricity_source, other_source=excluded.other_source
+        """, (date_str, total, rb, cl, el, ot, rbs, cls, els, ots))
+        cash_out = sum(amount for amount, source in [(rb,rbs),(cl,cls),(el,els),(ot,ots)] if source == "cash")
+        log_action(cursor, "費用支出", f"{date_str}；總計 ${total:g}；收銀現金支出 ${cash_out:g}")
         conn.commit()
         return jsonify({"status": "success"})
     finally:
@@ -1075,6 +1379,9 @@ def handle_orders():
                 datetime.strptime(sale_date, "%Y-%m-%d")
             except ValueError:
                 return jsonify({"message": "結帳日期格式錯誤"}), 400
+            guard = _day_write_guard(cursor, sale_date, require_open_today=True)
+            if guard:
+                return jsonify({"message": guard}), 409
             payment_method = str(data.get("payment_method") or "現金結帳").strip()
             if not cursor.execute("SELECT 1 FROM payment_methods WHERE name=?", (payment_method,)).fetchone():
                 return jsonify({"message": "付款方式不存在，請重新選擇"}), 400
@@ -1161,13 +1468,17 @@ def handle_orders():
                 raise
         order_id = request.args.get("id")
         conn.execute("BEGIN IMMEDIATE")
-        order = cursor.execute("SELECT is_void FROM orders WHERE id=?", (order_id,)).fetchone()
+        order = cursor.execute("SELECT is_void, date FROM orders WHERE id=?", (order_id,)).fetchone()
         if not order:
             conn.rollback()
             return jsonify({"message": "找不到單據"}), 404
         if order["is_void"]:
             conn.rollback()
             return jsonify({"message": "此單據已作廢"}), 409
+        guard = _day_write_guard(cursor, order["date"])
+        if guard:
+            conn.rollback()
+            return jsonify({"message": guard}), 409
         items = cursor.execute(
             "SELECT product_id, quantity, variant_id, track_stock_at_sale FROM order_items WHERE order_id=?",
             (order_id,),
@@ -1209,6 +1520,10 @@ def edit_order():
         if order["is_void"]:
             conn.rollback()
             return jsonify({"message": "已作廢單據不可編輯"}), 409
+        guard = _day_write_guard(cursor, order["date"])
+        if guard:
+            conn.rollback()
+            return jsonify({"message": guard}), 409
         if not cursor.execute("SELECT 1 FROM payment_methods WHERE name=?", (payment_method,)).fetchone():
             conn.rollback()
             return jsonify({"message": "付款方式不存在"}), 400
@@ -1332,6 +1647,15 @@ def update_order_date():
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
+        order = cursor.execute("SELECT date, is_void FROM orders WHERE id=?", (order_id,)).fetchone()
+        if not order:
+            return jsonify({"message": "找不到單據"}), 404
+        if order["is_void"]:
+            return jsonify({"message": "已作廢單據不可修改日期"}), 409
+        for day in {order["date"], new_date}:
+            guard = _day_write_guard(cursor, day, require_open_today=(day == new_date))
+            if guard:
+                return jsonify({"message": guard}), 409
         cursor.execute(
             "UPDATE orders SET date=?, edited_at=?, edited_by=?, edit_count=COALESCE(edit_count,0)+1 WHERE id=? AND is_void=0",
             (new_date, now_tw().strftime("%Y-%m-%d %H:%M:%S"), current_actor(), order_id),
@@ -1352,6 +1676,9 @@ def void_daily_orders():
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
+        guard = _day_write_guard(cursor, date_str)
+        if guard:
+            return jsonify({"message": guard}), 409
         conn.execute("BEGIN IMMEDIATE")
         orders = cursor.execute("SELECT id FROM orders WHERE date=? AND is_void=0", (date_str,)).fetchall()
         for row in orders:
@@ -1524,6 +1851,16 @@ def handle_report():
             "other": float(rent_row["other"] or 0),
             "total": rent,
         }
+        business_day = None
+        if mode == "daily":
+            bd = _business_day_row(cursor, target)
+            if bd:
+                business_day = dict(bd)
+                if business_day.get("payment_summary"):
+                    try:
+                        business_day["payment_summary"] = json.loads(business_day["payment_summary"])
+                    except Exception:
+                        business_day["payment_summary"] = {}
         return jsonify({
             "revenue": revenue,
             "cost": cost,
@@ -1540,6 +1877,7 @@ def handle_report():
             "open_days": open_days,
             "avg_daily_revenue": avg_daily_revenue,
             "best_day": best_day,
+            "business_day": business_day,
         })
     finally:
         conn.close()

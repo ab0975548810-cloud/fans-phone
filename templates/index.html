@@ -134,6 +134,23 @@
             #monthlyDailyTable tbody td::before { content:attr(data-label); color:#64748b; font-weight:700; }
         }
 
+        /* ===== V1.3 開班 / 關帳 ===== */
+        .shift-shell { max-width: 1100px; margin: 0 auto; }
+        .shift-status-card { border-radius: 18px; border: 1px solid #e2e8f0; }
+        .shift-kpi { border: 1px solid #e2e8f0; border-radius: 14px; background:#fff; height:100%; padding:14px; }
+        .shift-kpi .label { color:#64748b; font-size:.82rem; font-weight:700; }
+        .shift-kpi .value { font-size:1.35rem; font-weight:900; margin-top:3px; }
+        .cash-diff-good { color:#198754; }
+        .cash-diff-bad { color:#dc3545; }
+        #businessDayStatusBadge { cursor:pointer; user-select:none; }
+        .expense-source-select { max-width: 145px; }
+        @media (max-width: 767.98px) {
+            input, select, textarea { font-size:16px !important; }
+            .shift-kpi .value { font-size:1.15rem; }
+            .expense-row { align-items:stretch !important; }
+            .expense-source-select { max-width:none; }
+        }
+
     </style>
 </head>
 <body>
@@ -182,6 +199,7 @@
         </h3>
         <div class="d-flex align-items-center flex-wrap gap-2">
             <span id="liveClock" class="badge bg-dark fs-6 font-monospace me-2 shadow-sm py-2"></span>
+            <span id="businessDayStatusBadge" class="badge bg-secondary fs-6 shadow-sm py-2" onclick="showBusinessDayTab()">⚪ 未開班</span>
             <button class="btn btn-sm btn-outline-pink fw-bold shadow-sm" onclick="openPartnerModal()">👥 人員</button>
             <button class="btn btn-sm btn-outline-dark fw-bold shadow-sm" onclick="openSettingsModal()">⚙️ 設定</button>
             <button class="btn btn-sm btn-outline-secondary fw-bold shadow-sm" onclick="logoutPOS()">登出</button>
@@ -193,6 +211,7 @@
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#ordersManagement" type="button" onclick="loadOrders()">🧾 歷史單據</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#inventory" type="button" onclick="loadInventory()">📦 庫存管理</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#restockLogTab" type="button" onclick="loadRestockLogs()">🚛 進貨紀錄</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#businessDayTab" type="button" onclick="loadBusinessDay()">🌙 開／關班</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#report" type="button" onclick="loadReport()">📊 營業報表</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditLogTab" type="button" onclick="loadAuditLogs()">🕒 操作紀錄</button></li>
     </ul>
@@ -343,6 +362,67 @@
             </div>
         </div>
 
+        <!-- 🌙 開／關班 -->
+        <div class="tab-pane fade" id="businessDayTab" role="tabpanel">
+            <div class="shift-shell">
+                <div class="bg-white p-3 rounded-4 border shadow-sm mb-3 shift-status-card">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div><h4 class="fw-bold mb-1">🌙 每日開班／關帳</h4><div class="small text-secondary">備用金、付款核對、現金盤點與差額都會留下人員紀錄</div></div>
+                        <div class="d-flex align-items-center gap-2"><input type="date" id="businessDayDateInput" class="form-control fw-bold" onchange="loadBusinessDay()"><span id="shiftPageStatus" class="badge bg-secondary fs-6">未開班</span></div>
+                    </div>
+                </div>
+
+                <div id="shiftNotOpenedPanel" class="bg-white p-3 p-md-4 rounded-4 border shadow-sm mb-3 d-none">
+                    <h5 class="fw-bold mb-3">☀️ 開始今日營業</h5>
+                    <div class="row g-3 align-items-end">
+                        <div class="col-12 col-md-6"><label class="form-label fw-bold">💵 開班備用金</label><input type="number" min="0" id="openingCashInput" class="form-control form-control-lg fw-bold" placeholder="例如 2000"></div>
+                        <div class="col-12 col-md-6"><button class="btn btn-success btn-lg w-100 fw-bold" onclick="openBusinessDay()">✅ 確認開班</button></div>
+                    </div>
+                    <div class="small text-secondary mt-2">系統會記錄開班人與時間。今天的正常結帳前建議先完成開班。</div>
+                </div>
+
+                <div id="shiftSummaryPanel" class="d-none">
+                    <div class="row row-cols-2 row-cols-md-4 g-2 mb-3">
+                        <div class="col"><div class="shift-kpi"><div class="label">💰 今日營業額</div><div class="value text-primary" id="shiftRevenue">$0</div></div></div>
+                        <div class="col"><div class="shift-kpi"><div class="label">📉 商品成本</div><div class="value text-warning" id="shiftCost">$0</div></div></div>
+                        <div class="col"><div class="shift-kpi"><div class="label">💸 今日支出</div><div class="value" style="color:#6f42c1" id="shiftExpenses">$0</div></div></div>
+                        <div class="col"><div class="shift-kpi"><div class="label">🏆 今日淨利</div><div class="value text-success" id="shiftProfit">$0</div></div></div>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-lg-6"><div class="bg-white border rounded-4 shadow-sm p-3 h-100"><h6 class="fw-bold mb-3">💳 付款核對</h6><div id="shiftPaymentList"></div></div></div>
+                        <div class="col-lg-6"><div class="bg-white border rounded-4 shadow-sm p-3 h-100"><h6 class="fw-bold mb-3">💵 現金帳</h6>
+                            <div class="d-flex justify-content-between align-items-center py-2 border-bottom"><span>開班備用金</span><div class="d-flex align-items-center gap-2"><strong id="shiftOpeningCash">$0</strong><button id="editOpeningCashBtn" class="btn btn-sm btn-outline-secondary py-0" onclick="editOpeningCash()">修改</button></div></div>
+                            <div class="d-flex justify-content-between py-2 border-bottom"><span>現金銷售</span><strong id="shiftCashSales">$0</strong></div>
+                            <div class="d-flex justify-content-between py-2 border-bottom"><span>收銀現金支出</span><strong class="text-danger" id="shiftCashExpenses">-$0</strong></div>
+                            <div class="d-flex justify-content-between py-3"><span class="fw-bold">系統應有現金</span><strong class="fs-4 text-primary" id="shiftExpectedCash">$0</strong></div>
+                        </div></div>
+                    </div>
+
+                    <div id="shiftOpenPanel" class="bg-white border rounded-4 shadow-sm p-3 p-md-4 mb-3 d-none">
+                        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2"><div><h5 class="fw-bold mb-1">🌙 今日關帳</h5><div class="small text-secondary" id="shiftOpenedInfo"></div></div><span class="badge bg-success fs-6">營業中</span></div>
+                        <div class="row g-3">
+                            <div class="col-12 col-md-6"><label class="form-label fw-bold">🧮 實際盤點現金</label><input type="number" min="0" id="countedCashInput" class="form-control form-control-lg fw-bold" oninput="updateCashDifference()" placeholder="數完錢後輸入"></div>
+                            <div class="col-12 col-md-6"><label class="form-label fw-bold">現金差額</label><div id="cashDifferenceDisplay" class="form-control form-control-lg fw-bold bg-light">$0</div></div>
+                            <div class="col-12"><label class="form-label fw-bold">📝 差異原因 <span class="small text-secondary">（有差額時必填）</span></label><input type="text" id="cashDifferenceNote" class="form-control" placeholder="例如：找零誤差、臨時墊付..."></div>
+                            <div class="col-12"><button class="btn btn-dark btn-lg w-100 fw-bold py-3" onclick="closeBusinessDay()">🔒 確認今日關帳</button></div>
+                        </div>
+                    </div>
+
+                    <div id="shiftClosedPanel" class="bg-white border border-success rounded-4 shadow-sm p-3 p-md-4 mb-3 d-none">
+                        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2"><div><h5 class="fw-bold text-success mb-1">✅ 今日已完成關帳</h5><div class="small text-secondary" id="shiftClosedInfo"></div></div><span class="badge bg-success fs-6">已關帳</span></div>
+                        <div class="row row-cols-2 row-cols-md-3 g-2 mb-3">
+                            <div class="col"><div class="shift-kpi"><div class="label">實際盤點</div><div class="value" id="shiftCountedCash">$0</div></div></div>
+                            <div class="col"><div class="shift-kpi"><div class="label">系統應有</div><div class="value" id="shiftClosedExpected">$0</div></div></div>
+                            <div class="col"><div class="shift-kpi"><div class="label">現金差額</div><div class="value" id="shiftClosedDifference">$0</div></div></div>
+                        </div>
+                        <div id="shiftDifferenceNoteView" class="alert alert-light border mb-3 d-none"></div>
+                        <button class="btn btn-outline-danger w-100 fw-bold" onclick="reopenBusinessDay()">🔓 需要修改？重新開帳</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- 🕒 操作紀錄 -->
         <div class="tab-pane fade" id="auditLogTab" role="tabpanel">
             <div class="bg-white p-3 rounded border shadow-sm">
@@ -387,7 +467,7 @@
 
             <div id="reportCaptureArea" class="shadow-sm bg-white rounded p-3">
                 <div id="dailyReportContent">
-                    <div class="text-center mb-3"><h4 class="fw-bold text-dark m-0">📊 <span id="reportTitleText">營業報表總覽</span></h4><p class="text-secondary small mt-1 mb-0" id="reportDateHeader"></p></div>
+                    <div class="text-center mb-3"><h4 class="fw-bold text-dark m-0">📊 <span id="reportTitleText">營業報表總覽</span></h4><p class="text-secondary small mt-1 mb-1" id="reportDateHeader"></p><span id="dailyReportShiftBadge" class="badge bg-secondary">⚪ 未開班</span><div id="dailyReportShiftMeta" class="small text-secondary mt-1"></div></div>
                     <div class="row row-cols-2 row-cols-md-3 g-2 mb-3 justify-content-center">
                         <div class="col"><div class="stat-box rounded shadow-sm"><div class="box-title">💰 營業收入</div><div class="fs-5 fw-bold p-2 text-primary">$<span id="repRevenue">0</span></div></div></div>
                         <div class="col"><div class="stat-box rounded shadow-sm"><div class="box-title" style="background-color:#adb5bd;">📉 總計成本</div><div class="fs-5 fw-bold p-2 text-warning">$<span id="repCost">0</span></div></div></div>
@@ -454,10 +534,11 @@
         <div class="modal-content">
             <div class="modal-header bg-pink text-white"><h5 class="modal-title fw-bold">🎪 費用明細</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
             <div class="modal-body p-3">
-                <div class="mb-2"><label class="form-label small fw-bold">租金 ($)</label><input type="number" id="costRentBase" class="form-control fw-bold" oninput="calcRentModalTotal()"></div>
-                <div class="mb-2"><label class="form-label small fw-bold">清潔費 ($)</label><input type="number" id="costCleaning" class="form-control fw-bold" oninput="calcRentModalTotal()"></div>
-                <div class="mb-2"><label class="form-label small fw-bold">電費 ($)</label><input type="number" id="costElectricity" class="form-control fw-bold" oninput="calcRentModalTotal()"></div>
-                <div class="mb-2"><label class="form-label small fw-bold">其他 ($)</label><input type="number" id="costOther" class="form-control fw-bold" oninput="calcRentModalTotal()"></div>
+                <div class="small text-secondary mb-3">付款來源會影響關帳時的「系統應有現金」；只有選「收銀現金」才會從錢箱扣除。</div>
+                <div class="mb-3 expense-row"><label class="form-label small fw-bold">租金 ($)</label><div class="d-flex gap-2"><input type="number" id="costRentBase" class="form-control fw-bold" oninput="calcRentModalTotal()"><select id="costRentBaseSource" class="form-select expense-source-select"><option value="cash">收銀現金</option><option value="linepay">LINE Pay</option><option value="transfer">轉帳</option><option value="owner">店主自行支付</option></select></div></div>
+                <div class="mb-3 expense-row"><label class="form-label small fw-bold">清潔費 ($)</label><div class="d-flex gap-2"><input type="number" id="costCleaning" class="form-control fw-bold" oninput="calcRentModalTotal()"><select id="costCleaningSource" class="form-select expense-source-select"><option value="cash">收銀現金</option><option value="linepay">LINE Pay</option><option value="transfer">轉帳</option><option value="owner">店主自行支付</option></select></div></div>
+                <div class="mb-3 expense-row"><label class="form-label small fw-bold">電費 ($)</label><div class="d-flex gap-2"><input type="number" id="costElectricity" class="form-control fw-bold" oninput="calcRentModalTotal()"><select id="costElectricitySource" class="form-select expense-source-select"><option value="cash">收銀現金</option><option value="linepay">LINE Pay</option><option value="transfer">轉帳</option><option value="owner">店主自行支付</option></select></div></div>
+                <div class="mb-3 expense-row"><label class="form-label small fw-bold">其他 ($)</label><div class="d-flex gap-2"><input type="number" id="costOther" class="form-control fw-bold" oninput="calcRentModalTotal()"><select id="costOtherSource" class="form-select expense-source-select"><option value="cash">收銀現金</option><option value="linepay">LINE Pay</option><option value="transfer">轉帳</option><option value="owner">店主自行支付</option></select></div></div>
                 <hr class="my-2"><div class="d-flex justify-content-between"><span>總計：</span><span class="fw-extrabold text-danger" id="costTotalDisplay">$0</span></div>
             </div>
             <div class="modal-footer p-1"><button class="btn btn-pink w-100 fw-bold" onclick="saveRentDetails()">儲存</button></div>
@@ -728,6 +809,7 @@
         document.getElementById('restockYearInput').value = today.substring(0, 4);
         document.getElementById('checkoutDateInput').value = today;
         const auditInput=document.getElementById('auditDateInput'); if(auditInput) auditInput.value=today;
+        const shiftInput=document.getElementById('businessDayDateInput'); if(shiftInput) shiftInput.value=today;
         document.getElementById('orderDateFilter').value = today;
 
         partnerModalObj = new bootstrap.Modal(document.getElementById('partnerModal'));
@@ -764,7 +846,7 @@
         document.getElementById('headerPartnerName').innerText = `👋 ${auth.partner} - `;
         await loadStoreSettings();
         await loadPaymentMethods();
-        loadProducts(); loadOrders(); loadInventory(); loadReport();
+        loadProducts(); loadOrders(); loadInventory(); loadReport(); loadBusinessDay();
         loadPeople();
     };
 
@@ -914,9 +996,26 @@
         await renderPaymentMethodSettings(); await loadPaymentMethods();
     }
 
-    async function openRentModal() { const date = document.getElementById('reportDateInput').value; const res = await fetch(`/api/rent?date=${date}`); const data = await res.json(); document.getElementById('costRentBase').value = data.rent_base; document.getElementById('costCleaning').value = data.cleaning; document.getElementById('costElectricity').value = data.electricity; document.getElementById('costOther').value = data.other; calcRentModalTotal(); rentModalObj.show(); }
-    function calcRentModalTotal() { const r = parseFloat(document.getElementById('costRentBase').value)||0; const c = parseFloat(document.getElementById('costCleaning').value)||0; const e = parseFloat(document.getElementById('costElectricity').value)||0; const o = parseFloat(document.getElementById('costOther').value)||0; document.getElementById('costTotalDisplay').innerText = `$${r + c + e + o}`; }
-    async function saveRentDetails() { const date = document.getElementById('reportDateInput').value; const payload = { rent_base: document.getElementById('costRentBase').value, cleaning: document.getElementById('costCleaning').value, electricity: document.getElementById('costElectricity').value, other: document.getElementById('costOther').value }; const res = await fetch(`/api/rent?date=${date}`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) }); if(res.ok) { rentModalObj.hide(); loadReport(); } }
+    async function openRentModal() {
+        const date = document.getElementById('reportDateInput').value;
+        const res = await fetch(`/api/rent?date=${date}`); const data = await res.json();
+        if(!res.ok){ alert(data.message || '費用讀取失敗'); return; }
+        for (const [id,key] of [['costRentBase','rent_base'],['costCleaning','cleaning'],['costElectricity','electricity'],['costOther','other']]) document.getElementById(id).value = data[key] || 0;
+        for (const [id,key] of [['costRentBaseSource','rent_base_source'],['costCleaningSource','cleaning_source'],['costElectricitySource','electricity_source'],['costOtherSource','other_source']]) document.getElementById(id).value = data[key] || 'owner';
+        calcRentModalTotal(); rentModalObj.show();
+    }
+    function calcRentModalTotal() { const r = parseFloat(document.getElementById('costRentBase').value)||0; const c = parseFloat(document.getElementById('costCleaning').value)||0; const e = parseFloat(document.getElementById('costElectricity').value)||0; const o = parseFloat(document.getElementById('costOther').value)||0; document.getElementById('costTotalDisplay').innerText = `$${(r+c+e+o).toLocaleString('zh-TW')}`; }
+    async function saveRentDetails() {
+        const date = document.getElementById('reportDateInput').value;
+        const payload = {
+            rent_base: document.getElementById('costRentBase').value, rent_base_source: document.getElementById('costRentBaseSource').value,
+            cleaning: document.getElementById('costCleaning').value, cleaning_source: document.getElementById('costCleaningSource').value,
+            electricity: document.getElementById('costElectricity').value, electricity_source: document.getElementById('costElectricitySource').value,
+            other: document.getElementById('costOther').value, other_source: document.getElementById('costOtherSource').value
+        };
+        const res = await fetch(`/api/rent?date=${date}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); const data=await res.json();
+        if(res.ok){ rentModalObj.hide(); loadReport(); loadBusinessDay(); } else alert(data.message || '費用儲存失敗');
+    }
 
     async function loadProducts() { const res = await fetch('/api/products'); if(!res.ok) return; allProducts = await res.json(); renderPOSGrid(allProducts); populateCopyFromSelect(); populateRestockSelect(); }
     function populateRestockSelect() { const sel = document.getElementById('quickRestockSelect'); sel.innerHTML = '<option value="">＋ 點此選擇商品加入進貨單...</option>'; allProducts.filter(p => p.track_stock).forEach(p => { const opt=document.createElement('option'); opt.value=p.id; opt.textContent=p.name; sel.appendChild(opt); }); }
@@ -1036,7 +1135,7 @@
         const orderDate = document.getElementById('checkoutDateInput').value;
         const res = await fetch('/api/orders', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ date: orderDate, payment_method: document.getElementById('paymentMethodSelect').value, items }) });
         
-        if(res.ok) { alert("🎉 結帳成功！"); cart = []; document.getElementById('receivedAmount').value = ''; renderCart(); closeMobileCart(); loadProducts(); loadReport(); } else { const r = await res.json(); alert(r.message || "結帳失敗"); }
+        if(res.ok) { alert("🎉 結帳成功！"); cart = []; document.getElementById('receivedAmount').value = ''; renderCart(); closeMobileCart(); loadProducts(); loadReport(); loadBusinessDay(); } else { const r = await res.json(); alert(r.message || "結帳失敗"); }
         btn.disabled = false; btn.innerText = "確認結帳";
     }
 
@@ -1386,6 +1485,90 @@ const batch = batchHistoryRaw.find(b => b.batch_no === batch_no); if(!batch) ret
 
     function money(v) { return '$' + Math.round(Number(v || 0)).toLocaleString('zh-TW'); }
 
+    let currentBusinessDayData = null;
+
+    function showBusinessDayTab() {
+        const btn = document.querySelector('#posTabs button[data-bs-target="#businessDayTab"]');
+        if(btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+        loadBusinessDay();
+    }
+
+    function setBusinessDayBadge(status) {
+        const badge=document.getElementById('businessDayStatusBadge'); if(!badge) return;
+        badge.className='badge fs-6 shadow-sm py-2';
+        if(status==='open'){ badge.classList.add('bg-success'); badge.textContent='🟢 營業中'; }
+        else if(status==='closed'){ badge.classList.add('bg-dark'); badge.textContent='🔒 已關帳'; }
+        else { badge.classList.add('bg-secondary'); badge.textContent='⚪ 未開班'; }
+    }
+
+    async function loadBusinessDay() {
+        const dateEl=document.getElementById('businessDayDateInput'); if(!dateEl) return;
+        if(!dateEl.value) dateEl.value=localDateString();
+        const res=await fetch(`/api/business_day?date=${dateEl.value}`); const data=await res.json();
+        if(!res.ok){ alert(data.message || '開關班資料讀取失敗'); return; }
+        currentBusinessDayData=data;
+        const status=data.status||'not_opened'; const day=data.day||{}; const s=data.summary||{};
+        if(dateEl.value===localDateString()) setBusinessDayBadge(status);
+        const pageBadge=document.getElementById('shiftPageStatus'); pageBadge.className='badge fs-6';
+        pageBadge.classList.add(status==='open'?'bg-success':status==='closed'?'bg-dark':'bg-secondary');
+        pageBadge.textContent=status==='open'?'營業中':status==='closed'?'已關帳':'未開班';
+        document.getElementById('shiftNotOpenedPanel').classList.toggle('d-none',status!=='not_opened');
+        document.getElementById('shiftSummaryPanel').classList.toggle('d-none',status==='not_opened');
+        document.getElementById('shiftOpenPanel').classList.toggle('d-none',status!=='open');
+        document.getElementById('shiftClosedPanel').classList.toggle('d-none',status!=='closed');
+        const editOpenBtn=document.getElementById('editOpeningCashBtn'); if(editOpenBtn) editOpenBtn.classList.toggle('d-none', status!=='open');
+        if(status==='not_opened') return;
+        document.getElementById('shiftRevenue').textContent=money(s.revenue); document.getElementById('shiftCost').textContent=money(s.cost); document.getElementById('shiftExpenses').textContent=money(s.expenses); document.getElementById('shiftProfit').textContent=money(s.net_profit);
+        document.getElementById('shiftOpeningCash').textContent=money(s.opening_cash); document.getElementById('shiftCashSales').textContent=money(s.cash_sales); document.getElementById('shiftCashExpenses').textContent='-'+money(s.cash_expenses); document.getElementById('shiftExpectedCash').textContent=money(s.expected_cash);
+        const pay=document.getElementById('shiftPaymentList'); pay.innerHTML='';
+        const entries=Object.entries(s.payments||{}); if(!entries.length) pay.innerHTML='<div class="text-secondary">今天尚無付款紀錄</div>';
+        entries.forEach(([name,amt])=>{const row=document.createElement('div');row.className='d-flex justify-content-between py-2 border-bottom';const a=document.createElement('span');a.className='fw-bold';a.textContent=name;const b=document.createElement('strong');b.textContent=money(amt);row.append(a,b);pay.appendChild(row)});
+        if(status==='open'){
+            document.getElementById('shiftOpenedInfo').textContent=`開班人：${day.opened_by||'未知'} ｜ ${day.opened_at||''}`;
+            document.getElementById('countedCashInput').value=''; document.getElementById('cashDifferenceNote').value=''; updateCashDifference();
+        } else {
+            document.getElementById('shiftClosedInfo').textContent=`關帳人：${day.closed_by||'未知'} ｜ ${day.closed_at||''}${Number(day.reopen_count||0)>0?` ｜ 曾重新開帳 ${day.reopen_count} 次`:''}`;
+            document.getElementById('shiftCountedCash').textContent=money(day.counted_cash); document.getElementById('shiftClosedExpected').textContent=money(day.expected_cash);
+            const diff=Number(day.cash_difference||0); const diffEl=document.getElementById('shiftClosedDifference'); diffEl.textContent=(diff>0?'+':'')+money(diff); diffEl.className='value '+(diff===0?'cash-diff-good':'cash-diff-bad');
+            const note=document.getElementById('shiftDifferenceNoteView'); note.classList.toggle('d-none',!day.difference_note); note.textContent=day.difference_note?`差異原因：${day.difference_note}`:'';
+        }
+    }
+
+    function updateCashDifference() {
+        const input=document.getElementById('countedCashInput'); const el=document.getElementById('cashDifferenceDisplay'); if(!el||!input) return; if(input.value===''){el.textContent='—';el.className='form-control form-control-lg fw-bold bg-light text-secondary';return;} const counted=Number(input.value); const expected=Number(currentBusinessDayData?.summary?.expected_cash||0); const diff=counted-expected; el.textContent=(diff>0?'+':'')+money(diff); el.className='form-control form-control-lg fw-bold bg-light '+(Math.abs(diff)<0.01?'cash-diff-good':'cash-diff-bad');
+    }
+
+    async function openBusinessDay() {
+        const date=document.getElementById('businessDayDateInput').value; const opening=Number(document.getElementById('openingCashInput').value||0);
+        if(!confirm(`確定開班？\n日期：${date}\n備用金：${money(opening)}`)) return;
+        const res=await fetch('/api/business_day/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date,opening_cash:opening})}); const data=await res.json();
+        if(!res.ok){alert(data.message||'開班失敗');return;} document.getElementById('openingCashInput').value=''; await loadBusinessDay(); loadAuditLogs();
+    }
+
+    async function editOpeningCash() {
+        const date=document.getElementById('businessDayDateInput').value; const current=Number(currentBusinessDayData?.summary?.opening_cash||0);
+        const raw=prompt(`調整 ${date} 的開班備用金：`, String(current)); if(raw===null) return; const value=Number(raw);
+        if(!Number.isFinite(value)||value<0){alert('請輸入正確的備用金');return;}
+        const res=await fetch('/api/business_day/opening_cash',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date,opening_cash:value})}); const data=await res.json();
+        if(!res.ok){alert(data.message||'調整失敗');return;} await loadBusinessDay(); loadAuditLogs();
+    }
+
+    async function closeBusinessDay() {
+        const date=document.getElementById('businessDayDateInput').value; const counted=document.getElementById('countedCashInput').value; const note=document.getElementById('cashDifferenceNote').value.trim();
+        if(counted===''){alert('請先輸入實際盤點現金');return;}
+        const expected=Number(currentBusinessDayData?.summary?.expected_cash||0); const diff=Number(counted)-expected;
+        if(Math.abs(diff)>=0.01 && !note){alert('有現金差額時必須填寫差異原因');return;}
+        if(!confirm(`確認關帳？\n系統應有：${money(expected)}\n實際盤點：${money(counted)}\n差額：${diff>0?'+':''}${money(diff)}\n\n關帳後當日銷售與費用會鎖定。`)) return;
+        const res=await fetch('/api/business_day/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date,counted_cash:counted,difference_note:note})}); const data=await res.json();
+        if(!res.ok){alert(data.message||'關帳失敗');return;} await loadBusinessDay(); loadReport(); loadAuditLogs(); alert('✅ 今日關帳完成');
+    }
+
+    async function reopenBusinessDay() {
+        const date=document.getElementById('businessDayDateInput').value; const reason=prompt(`重新開啟 ${date} 帳務。\n請輸入原因：`,''); if(!reason||!reason.trim()) return;
+        const res=await fetch('/api/business_day/reopen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date,reason:reason.trim()})}); const data=await res.json();
+        if(!res.ok){alert(data.message||'重新開帳失敗');return;} await loadBusinessDay(); loadReport(); loadAuditLogs(); alert('🔓 已重新開帳，修改完成後請再次關帳。');
+    }
+
     function toggleReportModeInputs() {
         const mode = document.getElementById('reportModeSelect').value;
         const dInput = document.getElementById('reportDateInput');
@@ -1420,6 +1603,11 @@ const batch = batchHistoryRaw.find(b => b.batch_no === batch_no); if(!batch) ret
         document.getElementById('repRent').innerText = Math.round(data.rent || 0).toLocaleString('zh-TW');
         document.getElementById('repProfit').innerText = Math.round(data.net_profit || 0).toLocaleString('zh-TW');
         document.getElementById('repPartners').innerText = data.partners && data.partners.length ? data.partners.join('、') : '無資料';
+        const bd=data.business_day||null; const badge=document.getElementById('dailyReportShiftBadge'); const meta=document.getElementById('dailyReportShiftMeta');
+        badge.className='badge';
+        if(bd && bd.status==='closed'){badge.classList.add('bg-success');badge.textContent='✅ 已關帳';meta.textContent=`關帳人：${bd.closed_by||'未知'} ｜ ${bd.closed_at||''} ｜ 現金差額 ${(Number(bd.cash_difference||0)>0?'+':'')+money(bd.cash_difference||0)}`;}
+        else if(bd && bd.status==='open'){badge.classList.add('bg-warning','text-dark');badge.textContent='🟢 營業中／尚未關帳';meta.textContent=`開班人：${bd.opened_by||'未知'} ｜ ${bd.opened_at||''}`;}
+        else {badge.classList.add('bg-secondary');badge.textContent='⚪ 未開班';meta.textContent='';}
         const tbody = document.getElementById('reportDetailsTableBody'); tbody.innerHTML = '';
         (data.details || []).forEach(d => {
             const tr=document.createElement('tr');
@@ -1545,6 +1733,7 @@ const batch = batchHistoryRaw.find(b => b.batch_no === batch_no); if(!batch) ret
             let rawDate = document.getElementById('reportDateInput').value || localDateString();
             const fileDateStr = rawDate.replace(/-/g, '.'); const dateObj = new Date(rawDate + 'T12:00:00'); const weekDays = ["日", "一", "二", "三", "四", "五", "六"]; 
             document.getElementById('hwDate').innerText = `${fileDateStr} (${storeDisplayName} - 星期${weekDays[dateObj.getDay()]})`; 
+            const bd = data.business_day || null; if (bd && bd.status === 'closed') document.getElementById('hwDate').innerText += ' ✓已關帳';
             
             const rev = data.revenue || 0; const cost = data.cost || 0; const rent = data.rent || 0; const profit = data.net_profit || 0;
             document.getElementById('hwTotalCost').innerText = `$ ${cost}`; 
