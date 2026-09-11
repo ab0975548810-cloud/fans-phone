@@ -151,6 +151,40 @@
             .expense-source-select { max-width:none; }
         }
 
+        /* ===== V1.4 手機型號選擇 + 目標業績 + 年報 ===== */
+        .variant-sheet-backdrop { display:none; position:fixed; inset:0; z-index:1060; background:rgba(15,23,42,.55); }
+        .variant-sheet { position:fixed; left:0; right:0; bottom:0; z-index:1061; background:#fff; border-radius:22px 22px 0 0; box-shadow:0 -12px 36px rgba(15,23,42,.25); transform:translateY(105%); transition:transform .22s ease; max-height:min(82dvh,760px); display:flex; flex-direction:column; padding-bottom:max(10px,env(safe-area-inset-bottom)); }
+        body.variant-sheet-open .variant-sheet { transform:translateY(0); }
+        body.variant-sheet-open .variant-sheet-backdrop { display:block; }
+        body.variant-sheet-open { overflow:hidden; }
+        .variant-sheet-handle { width:44px; height:5px; border-radius:10px; background:#cbd5e1; margin:8px auto 4px; }
+        .variant-sheet-options { overflow:auto; overscroll-behavior:contain; padding:0 12px 12px; }
+        .variant-option { width:100%; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px 14px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; text-align:left; font-weight:800; }
+        .variant-option:active { background:#fff1f7; border-color:var(--pos-pink); }
+        .mobile-variant-trigger { min-height:46px; text-align:left; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+        .goal-panel { border:1px solid #f5bfd8; background:linear-gradient(145deg,#fff,#fff6fa); border-radius:18px; overflow:hidden; }
+        .goal-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+        .goal-stat { border:1px solid #e2e8f0; background:#fff; border-radius:14px; padding:12px; min-width:0; }
+        .goal-stat .label { color:#64748b; font-size:.8rem; font-weight:800; }
+        .goal-stat .value { font-size:1.25rem; font-weight:900; margin-top:4px; overflow-wrap:anywhere; }
+        .goal-progress { height:18px; border-radius:999px; background:#e2e8f0; overflow:hidden; }
+        .goal-progress-bar { height:100%; min-width:0; background:linear-gradient(90deg,var(--pos-pink),var(--pos-pink-dark)); transition:width .25s ease; }
+        .yearly-summary-card { border:0; border-radius:16px; box-shadow:0 4px 14px rgba(15,23,42,.08); height:100%; }
+        .yearly-summary-card .label { color:#64748b; font-size:.82rem; font-weight:700; }
+        .yearly-summary-card .value { font-size:1.35rem; font-weight:900; margin-top:4px; }
+        #yearlyMonthlyTable { margin-bottom:0; }
+        @media (max-width:767.98px) {
+            .smart-dropdown-menu { display:none !important; }
+            .goal-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+            .goal-stat .value { font-size:1.05rem; }
+            .yearly-summary-card .value { font-size:1.08rem; }
+            .variant-sheet { max-height:calc(100dvh - 10px); }
+            #yearlyMonthlyTable thead { display:none; }
+            #yearlyMonthlyTable tbody tr { display:block; padding:10px; border-bottom:1px solid #e2e8f0; }
+            #yearlyMonthlyTable tbody td { display:flex; justify-content:space-between; border:0; padding:4px 0; gap:12px; }
+            #yearlyMonthlyTable tbody td::before { content:attr(data-label); color:#64748b; font-weight:700; flex-shrink:0; }
+        }
+
     </style>
 </head>
 <body>
@@ -446,17 +480,22 @@
                     <div class="col-6 col-md-3">
                         <label class="form-label fw-bold text-secondary small">📊 類型</label>
                         <select id="reportModeSelect" class="form-select fw-bold border-primary" onchange="toggleReportModeInputs()">
-                            <option value="daily">📅 日報表</option><option value="monthly">📆 月報表</option>
+                            <option value="daily">📅 日報表</option><option value="monthly">📆 月報表</option><option value="yearly">🗓️ 年報表</option>
                         </select>
                     </div>
                     <div class="col-6 col-md-3">
                         <label class="form-label fw-bold text-secondary small">📆 日期</label>
                         <input type="date" id="reportDateInput" class="form-control fw-bold" onchange="loadReport()">
                         <input type="month" id="reportMonthInput" class="form-control fw-bold d-none" onchange="loadReport()">
+                        <input type="number" min="2000" max="2200" id="reportYearInput" class="form-control fw-bold d-none" placeholder="例如 2026" onchange="loadReport()">
                     </div>
                     <div class="col-12 col-md-3" id="dailyExpenseControl">
                         <label class="form-label fw-bold text-secondary small">💸 費用支出</label>
                         <div class="input-group"><input type="number" id="dailyRentInput" class="form-control fw-bold" readonly placeholder="總支出" onclick="openRentModal()"><button class="btn btn-pink fw-bold" onclick="openRentModal()">明細</button></div>
+                    </div>
+                    <div class="col-12 col-md-3 d-none" id="reportGoalControl">
+                        <label class="form-label fw-bold text-secondary small" id="reportGoalLabel">🎯 目標業績</label>
+                        <div class="input-group"><span class="input-group-text">$</span><input type="number" min="0" id="reportTargetInput" class="form-control fw-bold" placeholder="設定目標"><button class="btn btn-pink fw-bold" onclick="saveReportTarget(this)">儲存</button></div>
                     </div>
                     <div class="col-12 col-md-3 d-flex gap-2 justify-content-end">
                         <button class="btn btn-success fw-bold flex-grow-1 shadow-sm" onclick="exportReportToImage(event)">📸 匯出報表</button>
@@ -489,13 +528,29 @@
                         <div class="col"><div class="monthly-summary-card p-3"><div class="label">🏆 月淨利</div><div class="value text-success" id="monthProfit">$0</div></div></div>
                         <div class="col"><div class="monthly-summary-card p-3"><div class="label">📦 月總銷量</div><div class="value text-dark" id="monthQty">0 件</div></div></div>
                     </div>
+                    <div class="goal-panel mb-3">
+                        <div class="monthly-section-title">🎯 月業績目標追蹤</div>
+                        <div class="p-3">
+                            <div class="goal-grid mb-3">
+                                <div class="goal-stat"><div class="label">目標業績</div><div class="value" id="monthGoalTarget">尚未設定</div></div>
+                                <div class="goal-stat"><div class="label">真實業績</div><div class="value text-primary" id="monthGoalActual">$0</div></div>
+                                <div class="goal-stat"><div class="label" id="monthGoalDiffLabel">還差多少</div><div class="value" id="monthGoalDiff">$0</div></div>
+                                <div class="goal-stat"><div class="label">達成率</div><div class="value text-pink" id="monthGoalRate">0%</div></div>
+                            </div>
+                            <div class="d-flex justify-content-between small fw-bold mb-1"><span>目標達成進度</span><span id="monthGoalProgressText">0%</span></div>
+                            <div class="goal-progress mb-2"><div class="goal-progress-bar" id="monthGoalProgressBar" style="width:0%"></div></div>
+                            <div class="row g-2 small">
+                                <div class="col-12 col-md-4"><div class="p-2 bg-white rounded border" id="monthGoalExpected">目前應有進度：—</div></div>
+                                <div class="col-12 col-md-4"><div class="p-2 bg-white rounded border" id="monthGoalPace">目前進度：—</div></div>
+                                <div class="col-12 col-md-4"><div class="p-2 bg-white rounded border" id="monthGoalNeeded">剩餘每日需做：—</div></div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="row row-cols-1 row-cols-md-3 g-2 mb-3">
                         <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">營業天數</div><div class="fs-4 fw-bold" id="monthOpenDays">0 天</div></div></div>
                         <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">平均每日營業額</div><div class="fs-4 fw-bold text-primary" id="monthAverage">$0</div></div></div>
                         <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">本月最高營業日</div><div class="fs-6 fw-bold" id="monthBestDay">無資料</div></div></div>
                     </div>
-
-                    <div class="monthly-section mb-3"><div class="monthly-section-title">📈 每日營業額走勢</div><div id="monthBars" class="month-bars"></div></div>
                     <div class="monthly-section mb-3"><div class="monthly-section-title">📅 每日營業表現</div><div class="table-responsive"><table id="monthlyDailyTable" class="table table-hover align-middle"><thead class="table-light"><tr><th>日期</th><th>單數</th><th>營業額</th><th>成本</th><th>支出</th><th>淨利</th></tr></thead><tbody id="monthlyDailyBody"></tbody></table></div></div>
                     <div class="row g-3 mb-3">
                         <div class="col-lg-7"><div class="monthly-section h-100"><div class="monthly-section-title">🏅 本月商品排行</div><div id="monthlyTopProducts" class="p-2"></div></div></div>
@@ -503,11 +558,66 @@
                     </div>
                     <div class="monthly-section"><div class="monthly-section-title">👥 本月值班人員</div><div id="monthlyPartners" class="p-3 fw-bold">無資料</div></div>
                 </div>
+
+                <div id="yearlyReportContent" class="d-none">
+                    <div class="text-center mb-4"><h3 class="fw-bold mb-1">🗓️ 年度營運總覽</h3><div id="yearlyTitle" class="text-secondary fw-bold"></div></div>
+                    <div class="row row-cols-2 row-cols-lg-6 g-2 mb-3">
+                        <div class="col"><div class="yearly-summary-card p-3"><div class="label">💰 年營業額</div><div class="value text-primary" id="yearRevenue">$0</div></div></div>
+                        <div class="col"><div class="yearly-summary-card p-3"><div class="label">📉 年總成本</div><div class="value text-warning" id="yearCost">$0</div></div></div>
+                        <div class="col"><div class="yearly-summary-card p-3"><div class="label">💸 年總支出</div><div class="value" style="color:#6f42c1" id="yearExpenses">$0</div></div></div>
+                        <div class="col"><div class="yearly-summary-card p-3"><div class="label">🏆 年淨利</div><div class="value text-success" id="yearProfit">$0</div></div></div>
+                        <div class="col"><div class="yearly-summary-card p-3"><div class="label">📦 年總銷量</div><div class="value" id="yearQty">0 件</div></div></div>
+                        <div class="col"><div class="yearly-summary-card p-3"><div class="label">🧾 年訂單數</div><div class="value" id="yearOrders">0 單</div></div></div>
+                    </div>
+                    <div class="goal-panel mb-3">
+                        <div class="monthly-section-title">🎯 年度業績目標追蹤</div>
+                        <div class="p-3">
+                            <div class="goal-grid mb-3">
+                                <div class="goal-stat"><div class="label">年度目標</div><div class="value" id="yearGoalTarget">尚未設定</div></div>
+                                <div class="goal-stat"><div class="label">真實業績</div><div class="value text-primary" id="yearGoalActual">$0</div></div>
+                                <div class="goal-stat"><div class="label" id="yearGoalDiffLabel">還差多少</div><div class="value" id="yearGoalDiff">$0</div></div>
+                                <div class="goal-stat"><div class="label">達成率</div><div class="value text-pink" id="yearGoalRate">0%</div></div>
+                            </div>
+                            <div class="d-flex justify-content-between small fw-bold mb-1"><span>年度目標進度</span><span id="yearGoalProgressText">0%</span></div>
+                            <div class="goal-progress mb-2"><div class="goal-progress-bar" id="yearGoalProgressBar" style="width:0%"></div></div>
+                            <div class="row g-2 small">
+                                <div class="col-12 col-md-4"><div class="p-2 bg-white rounded border" id="yearGoalExpected">目前應有進度：—</div></div>
+                                <div class="col-12 col-md-4"><div class="p-2 bg-white rounded border" id="yearGoalPace">目前進度：—</div></div>
+                                <div class="col-12 col-md-4"><div class="p-2 bg-white rounded border" id="yearGoalNeeded">剩餘每日需做：—</div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row row-cols-2 row-cols-lg-6 g-2 mb-3">
+                        <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">營業月份</div><div class="fs-5 fw-bold" id="yearActiveMonths">0 個月</div></div></div>
+                        <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">平均月營業額</div><div class="fs-5 fw-bold text-primary" id="yearAvgRevenue">$0</div></div></div>
+                        <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">平均月淨利</div><div class="fs-5 fw-bold text-success" id="yearAvgProfit">$0</div></div></div>
+                        <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">最佳月份</div><div class="fw-bold" id="yearBestMonth">無資料</div></div></div>
+                        <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">最低月份</div><div class="fw-bold" id="yearWorstMonth">無資料</div></div></div>
+                        <div class="col"><div class="p-3 border rounded-4 bg-light h-100"><div class="small text-secondary fw-bold">較去年同期</div><div class="fw-bold" id="yearYoY">無去年資料</div></div></div>
+                    </div>
+                    <div class="monthly-section mb-3"><div class="monthly-section-title">📆 12 個月營業表現</div><div class="table-responsive"><table id="yearlyMonthlyTable" class="table table-hover align-middle"><thead class="table-light"><tr><th>月份</th><th>單數</th><th>營業額</th><th>成本</th><th>支出</th><th>淨利</th></tr></thead><tbody id="yearlyMonthlyBody"></tbody></table></div></div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-lg-7"><div class="monthly-section h-100"><div class="monthly-section-title">🏅 年度商品排行</div><div id="yearlyTopProducts" class="p-2"></div></div></div>
+                        <div class="col-lg-5"><div class="monthly-section mb-3"><div class="monthly-section-title">💳 年度付款方式</div><div id="yearlyPayments" class="p-3"></div></div><div class="monthly-section"><div class="monthly-section-title">💸 年度費用支出</div><div id="yearlyExpenseBreakdown" class="p-3"></div></div></div>
+                    </div>
+                    <div class="monthly-section"><div class="monthly-section-title">👥 年度值班人員</div><div id="yearlyPartners" class="p-3 fw-bold">無資料</div></div>
+                </div>
             </div>
         </div>
 
 
     </div>
+</div>
+
+<!-- 📱 手機型號 Bottom Sheet -->
+<div class="variant-sheet-backdrop" id="variantSheetBackdrop" onclick="closeVariantSheet()"></div>
+<div class="variant-sheet" id="variantSheet" aria-hidden="true">
+    <div class="variant-sheet-handle"></div>
+    <div class="px-3 pt-1 pb-2 border-bottom">
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-2"><div><div class="fw-bold fs-5">📱 選擇型號</div><div class="small text-secondary" id="variantSheetProductName"></div></div><button class="btn btn-sm btn-outline-secondary" onclick="closeVariantSheet()">✕</button></div>
+        <input id="variantSheetSearch" type="search" class="form-control form-control-lg fw-bold" placeholder="🔍 搜尋型號，例如 15 Pro" oninput="renderVariantSheetOptions()">
+    </div>
+    <div class="variant-sheet-options" id="variantSheetOptions"></div>
 </div>
 
 <!-- ================= Modal 區塊 ================= -->
@@ -759,7 +869,8 @@
     let allProducts = [], cart = [], currentSubItems = [];
     let restockCart = []; 
     let batchHistoryRaw = [];
-    let ordersHistoryRaw = [], editOrderRows = []; 
+    let ordersHistoryRaw = [], editOrderRows = [];
+    let variantSheetCartIndex = null, variantSheetProductId = null; 
     let partnerModalObj, subItemBootstrapModal, rentModalObj, productEditModalObj, restockMatrixModalObj, editBatchModalObj, editOrderModalObj, exportResultModalObj, settingsModalObj;
 
 
@@ -804,6 +915,7 @@
         const today = localDateString();
         document.getElementById('reportDateInput').value = today;
         document.getElementById('reportMonthInput').value = today.substring(0, 7);
+        document.getElementById('reportYearInput').value = today.substring(0, 4);
         document.getElementById('restockDateInput').value = today;
         document.getElementById('restockMonthInput').value = today.substring(0, 7);
         document.getElementById('restockYearInput').value = today.substring(0, 4);
@@ -1071,16 +1183,21 @@
             total += item.price_at_sale * item.quantity; let productInfo = allProducts.find(p => p.id === item.product_id);
             let inputHtml = '';
             if (productInfo && productInfo.variants && productInfo.variants.length > 0) {
-                inputHtml = `
-                <div class="position-relative w-100">
-                    <input type="text" class="form-control border-primary text-primary fw-bold w-100" style="font-size: 1.1rem; height: 45px;"
-                           value="${item.model_note}" placeholder="👉 點此輸入或下拉選型號..."
-                           onfocus="showSmartDropdown(${index}, ${item.product_id})"
-                           oninput="filterSmartDropdown(${index}, this.value, ${item.product_id})"
-                           onblur="setTimeout(() => hideSmartDropdown(${index}), 200)">
-                    <div id="smartDropdown-${index}" class="smart-dropdown-menu"></div>
-                </div>`;
-            } else { inputHtml = `<input type="text" class="form-control border-primary text-primary fw-bold w-100" style="font-size: 1.1rem; height: 45px;" value="${item.model_note}" oninput="cart[${index}].model_note=this.value" placeholder="📝 手打備註...">`; }
+                if (isMobileVariantUI()) {
+                    const selectedText = item.model_note ? `✅ ${escapeHTML(item.model_note)}` : '👉 點此選擇型號';
+                    inputHtml = `<button type="button" class="btn btn-outline-primary fw-bold w-100 mobile-variant-trigger" onclick="openVariantSheet(${index}, ${item.product_id})"><span>${selectedText}</span><span>⌄</span></button>`;
+                } else {
+                    inputHtml = `
+                    <div class="position-relative w-100">
+                        <input type="text" class="form-control border-primary text-primary fw-bold w-100" style="font-size: 1.1rem; height: 45px;"
+                               value="${escapeHTML(item.model_note)}" placeholder="👉 點此輸入或下拉選型號..."
+                               onfocus="showSmartDropdown(${index}, ${item.product_id})"
+                               oninput="filterSmartDropdown(${index}, this.value, ${item.product_id})"
+                               onblur="setTimeout(() => hideSmartDropdown(${index}), 200)">
+                        <div id="smartDropdown-${index}" class="smart-dropdown-menu"></div>
+                    </div>`;
+                }
+            } else { inputHtml = `<input type="text" class="form-control border-primary text-primary fw-bold w-100" style="font-size: 1.1rem; height: 45px;" value="${escapeHTML(item.model_note)}" oninput="cart[${index}].model_note=this.value" placeholder="📝 手打備註...">`; }
             
             container.innerHTML += `
             <div class="p-2 border-bottom bg-white rounded shadow-sm mb-2">
@@ -1105,6 +1222,53 @@
         document.getElementById('cartTotal').innerText = '$' + total; updateMobileCartSummary(); calculatePOSChange();
     }
     
+    function isMobileVariantUI() { return window.matchMedia('(max-width: 767.98px)').matches; }
+
+    function openVariantSheet(index, pid) {
+        variantSheetCartIndex = index; variantSheetProductId = pid;
+        const product = allProducts.find(p => p.id === pid);
+        if (!product) return;
+        document.getElementById('variantSheetProductName').textContent = product.name;
+        const search = document.getElementById('variantSheetSearch');
+        search.value = '';
+        renderVariantSheetOptions();
+        document.body.classList.add('variant-sheet-open');
+        document.getElementById('variantSheet').setAttribute('aria-hidden','false');
+        setTimeout(() => { try { search.focus({preventScroll:true}); } catch(e) { search.focus(); } }, 180);
+    }
+
+    function closeVariantSheet() {
+        document.body.classList.remove('variant-sheet-open');
+        const sheet=document.getElementById('variantSheet'); if(sheet) sheet.setAttribute('aria-hidden','true');
+        const search=document.getElementById('variantSheetSearch'); if(search) search.blur();
+        variantSheetCartIndex = null; variantSheetProductId = null;
+    }
+
+    function renderVariantSheetOptions() {
+        const box=document.getElementById('variantSheetOptions'); if(!box) return;
+        const product=allProducts.find(p=>p.id===variantSheetProductId);
+        if(!product){box.innerHTML='<div class="text-secondary text-center py-4">找不到商品</div>';return;}
+        const keyword=(document.getElementById('variantSheetSearch').value||'').trim().toLowerCase();
+        const options=(product.variants||[]).filter(v=>v.name.toLowerCase().includes(keyword));
+        box.innerHTML='';
+        if(!options.length){box.innerHTML='<div class="text-secondary text-center py-4">沒有符合的型號</div>';return;}
+        options.forEach(v=>{
+            const btn=document.createElement('button'); btn.type='button'; btn.className='variant-option';
+            const name=document.createElement('span'); name.textContent=v.name;
+            const stock=document.createElement('span'); stock.className=`badge ${Number(v.stock)<=Number(v.threshold||0)?'bg-danger':'bg-light text-dark border'}`; stock.textContent=`庫存 ${v.stock}`;
+            btn.append(name,stock); btn.addEventListener('click',()=>selectVariantFromSheet(v)); box.appendChild(btn);
+        });
+    }
+
+    function selectVariantFromSheet(variant) {
+        if(variantSheetCartIndex===null || !cart[variantSheetCartIndex]) return;
+        cart[variantSheetCartIndex].model_note=variant.name;
+        cart[variantSheetCartIndex].variant_id=variant.id;
+        closeVariantSheet(); renderCart();
+    }
+
+    window.addEventListener('resize',()=>{ if(!isMobileVariantUI() && document.body.classList.contains('variant-sheet-open')) closeVariantSheet(); });
+
     function showSmartDropdown(index, pid) { const dropdown = document.getElementById(`smartDropdown-${index}`); const inputVal = dropdown.previousElementSibling.value.toLowerCase(); renderSmartOptions(index, pid, inputVal); dropdown.style.display = 'block'; }
     function filterSmartDropdown(index, val, pid) { cart[index].model_note = val; updateCartVariantId(index, val); const dropdown = document.getElementById(`smartDropdown-${index}`); dropdown.style.display = 'block'; renderSmartOptions(index, pid, val.toLowerCase()); }
     function hideSmartDropdown(index) { const dropdown = document.getElementById(`smartDropdown-${index}`); if(dropdown) dropdown.style.display = 'none'; calculatePOSChange(); }
@@ -1112,7 +1276,12 @@
         const dropdown = document.getElementById(`smartDropdown-${index}`); const p = allProducts.find(x => x.id === pid); dropdown.innerHTML = ''; if(!p || !p.variants) return;
         const filtered = p.variants.filter(v => v.name.toLowerCase().includes(filterText));
         if(filtered.length === 0) { dropdown.innerHTML = '<div class="p-2 text-muted small">無符合型號</div>'; return; }
-        filtered.forEach(v => { dropdown.innerHTML += `<div class="smart-dropdown-item" onmousedown="selectSmartVariant(${index}, '${v.name}'); event.preventDefault();">${v.name}</div>`; });
+        filtered.forEach(v => {
+            const row=document.createElement('div'); row.className='smart-dropdown-item d-flex justify-content-between align-items-center gap-2';
+            const name=document.createElement('span'); name.textContent=v.name;
+            const stock=document.createElement('span'); stock.className='small text-secondary'; stock.textContent=`庫存 ${v.stock}`;
+            row.append(name,stock); row.addEventListener('mousedown',event=>{event.preventDefault();selectSmartVariant(index,v.name);}); dropdown.appendChild(row);
+        });
     }
     function selectSmartVariant(index, val) { cart[index].model_note = val; updateCartVariantId(index, val); renderCart(); }
     function updateCartVariantId(index, val) { let p = allProducts.find(prod => prod.id === cart[index].product_id); if(p && p.variants) { let v = p.variants.find(variant => variant.name === val); cart[index].variant_id = v ? v.id : null; } else { cart[index].variant_id = null; } }
@@ -1573,29 +1742,64 @@ const batch = batchHistoryRaw.find(b => b.batch_no === batch_no); if(!batch) ret
         const mode = document.getElementById('reportModeSelect').value;
         const dInput = document.getElementById('reportDateInput');
         const mInput = document.getElementById('reportMonthInput');
+        const yInput = document.getElementById('reportYearInput');
         const dailyExpense = document.getElementById('dailyExpenseControl');
+        const goalControl = document.getElementById('reportGoalControl');
         const hwBtn = document.getElementById('handwrittenExportBtn');
         dInput.classList.toggle('d-none', mode !== 'daily');
         mInput.classList.toggle('d-none', mode !== 'monthly');
+        yInput.classList.toggle('d-none', mode !== 'yearly');
         dailyExpense.classList.toggle('d-none', mode !== 'daily');
+        goalControl.classList.toggle('d-none', mode === 'daily');
         hwBtn.classList.toggle('d-none', mode !== 'daily');
+        document.getElementById('reportGoalLabel').textContent = mode === 'yearly' ? '🎯 年度目標業績' : '🎯 本月目標業績';
         document.getElementById('dailyReportContent').classList.toggle('d-none', mode !== 'daily');
         document.getElementById('monthlyReportContent').classList.toggle('d-none', mode !== 'monthly');
+        document.getElementById('yearlyReportContent').classList.toggle('d-none', mode !== 'yearly');
         loadReport();
+    }
+
+    function currentReportPeriod() {
+        const mode=document.getElementById('reportModeSelect').value;
+        if(mode==='daily') return document.getElementById('reportDateInput').value;
+        if(mode==='monthly') return document.getElementById('reportMonthInput').value;
+        return document.getElementById('reportYearInput').value;
+    }
+
+    async function saveReportTarget(btn) {
+        const mode=document.getElementById('reportModeSelect').value;
+        if(mode==='daily') return;
+        const period=currentReportPeriod();
+        const amount=Math.max(0,Number(document.getElementById('reportTargetInput').value||0));
+        const old=btn.innerHTML; btn.disabled=true; btn.innerHTML='儲存中...';
+        try {
+            const res=await fetch('/api/report_target',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,period,target_amount:amount})});
+            const data=await res.json();
+            if(!res.ok){alert(data.message||'目標儲存失敗');return;}
+            await loadReport();
+            alert(amount>0?'🎯 目標業績已儲存！':'✅ 已清除這個期間的目標業績');
+        } finally { btn.disabled=false; btn.innerHTML=old; }
     }
 
     async function loadReport() {
         const mode = document.getElementById('reportModeSelect').value;
-        const target = mode === 'daily' ? document.getElementById('reportDateInput').value : document.getElementById('reportMonthInput').value;
-        const res = await fetch(`/api/report?mode=${mode}&date=${target}&month=${target}`);
+        const target = currentReportPeriod();
+        let url='';
+        if(mode==='daily') url=`/api/report?mode=daily&date=${encodeURIComponent(target)}`;
+        else if(mode==='monthly') url=`/api/report?mode=monthly&month=${encodeURIComponent(target)}`;
+        else url=`/api/report?mode=yearly&year=${encodeURIComponent(target)}`;
+        const res = await fetch(url);
         const data = await res.json();
         if (!res.ok) { alert(data.message || '報表讀取失敗'); return; }
-        if (mode === 'daily') renderDailyReport(target, data); else renderMonthlyReport(target, data);
+        if(mode!=='daily') document.getElementById('reportTargetInput').value=Number(data.target?.target_amount||0) || '';
+        if (mode === 'daily') renderDailyReport(target, data);
+        else if (mode === 'monthly') renderMonthlyReport(target, data);
+        else renderYearlyReport(target, data);
     }
 
     function renderDailyReport(date, data) {
         document.getElementById('reportDateHeader').innerText = `【 ${date} 報表 】`;
-        const totalQty = (data.details || []).reduce((s, i) => s + Number(i.quantity || 0), 0);
+        const totalQty = Number(data.total_qty ?? (data.details || []).reduce((s, i) => s + Number(i.quantity || 0), 0));
         document.getElementById('repFilmCount').innerText = totalQty;
         document.getElementById('dailyRentInput').value = data.rent || 0;
         document.getElementById('repRevenue').innerText = Math.round(data.revenue || 0).toLocaleString('zh-TW');
@@ -1624,63 +1828,102 @@ const batch = batchHistoryRaw.find(b => b.batch_no === batch_no); if(!batch) ret
         });
     }
 
-    function renderMonthlyReport(month, data) {
-        const totalQty=(data.details||[]).reduce((s,i)=>s+Number(i.quantity||0),0);
-        document.getElementById('monthlyTitle').textContent=`${month} ｜ ${storeDisplayName}`;
-        document.getElementById('monthRevenue').textContent=money(data.revenue);
-        document.getElementById('monthCost').textContent=money(data.cost);
-        document.getElementById('monthExpenses').textContent=money(data.rent);
-        document.getElementById('monthProfit').textContent=money(data.net_profit);
-        document.getElementById('monthQty').textContent=`${totalQty.toLocaleString('zh-TW')} 件`;
-        document.getElementById('monthOpenDays').textContent=`${Number(data.open_days||0)} 天`;
-        document.getElementById('monthAverage').textContent=money(data.avg_daily_revenue);
-        document.getElementById('monthBestDay').textContent=data.best_day ? `${data.best_day.date.slice(5)} ｜ ${money(data.best_day.revenue)}` : '無資料';
+    function renderGoal(prefix, targetData) {
+        const d=targetData||{}; const target=Number(d.target_amount||0); const actual=Number(d.actual_revenue||0); const diff=Number(d.difference||0); const rate=Number(d.achievement_rate||0);
+        document.getElementById(`${prefix}GoalTarget`).textContent=target>0?money(target):'尚未設定';
+        document.getElementById(`${prefix}GoalActual`).textContent=money(actual);
+        const diffLabel=document.getElementById(`${prefix}GoalDiffLabel`); const diffEl=document.getElementById(`${prefix}GoalDiff`);
+        if(target<=0){diffLabel.textContent='還差多少';diffEl.textContent='—';diffEl.className='value text-secondary';}
+        else if(diff>=0){diffLabel.textContent='已超標';diffEl.textContent='+'+money(diff);diffEl.className='value text-success';}
+        else {diffLabel.textContent='還差多少';diffEl.textContent=money(Math.abs(diff));diffEl.className='value text-danger';}
+        document.getElementById(`${prefix}GoalRate`).textContent=target>0?`${rate.toFixed(1)}%`:'—';
+        document.getElementById(`${prefix}GoalProgressText`).textContent=target>0?`${rate.toFixed(1)}%`:'尚未設定';
+        document.getElementById(`${prefix}GoalProgressBar`).style.width=`${target>0?Math.min(100,Math.max(0,rate)):0}%`;
+        if(target<=0){
+            document.getElementById(`${prefix}GoalExpected`).textContent='目前應有進度：請先設定目標';
+            document.getElementById(`${prefix}GoalPace`).textContent='目前進度：—';
+            document.getElementById(`${prefix}GoalNeeded`).textContent='剩餘每日需做：—';
+            return;
+        }
+        document.getElementById(`${prefix}GoalExpected`).textContent=`應有進度 ${Number(d.expected_progress_rate||0).toFixed(1)}% ｜ ${money(d.expected_revenue||0)}`;
+        const pace=Number(d.pace_difference||0); document.getElementById(`${prefix}GoalPace`).textContent=pace>=0?`✅ 目前超前 ${money(pace)}`:`⚠️ 目前落後 ${money(Math.abs(pace))}`;
+        const remain=Number(d.remaining_days||0); const needed=Number(d.needed_per_day||0);
+        document.getElementById(`${prefix}GoalNeeded`).textContent=remain>0?(diff>=0?`🎉 已達標｜剩餘 ${remain} 天`:`剩餘 ${remain} 天｜平均 ${money(needed)}/天`):(diff>=0?'🎉 本期已達標':'本期已結束');
+    }
 
-        const days=data.daily_breakdown||[];
-        const maxRev=Math.max(1,...days.map(x=>Number(x.revenue||0)));
-        const bars=document.getElementById('monthBars'); bars.innerHTML='';
-        if(!days.length){ bars.innerHTML='<div class="text-secondary text-center w-100 py-5">本月尚無資料</div>'; }
-        days.forEach(d=>{
-            const wrap=document.createElement('div'); wrap.className='month-bar-wrap';
-            const bar=document.createElement('div'); bar.className='month-bar'; bar.style.height=`${Math.max(3,(Number(d.revenue||0)/maxRev)*140)}px`; bar.title=`${d.date} ${money(d.revenue)}`;
-            const label=document.createElement('div'); label.className='month-bar-label'; label.textContent=d.date.slice(8);
-            wrap.append(bar,label); bars.appendChild(wrap);
-        });
-
-        const dailyBody=document.getElementById('monthlyDailyBody'); dailyBody.innerHTML='';
-        days.forEach(d=>{
-            const tr=document.createElement('tr');
-            const vals=[d.date.slice(5),d.orders_count,money(d.revenue),money(d.cost),money(d.expenses),money(d.profit)];
-            const labels=['日期','單數','營業額','成本','支出','淨利'];
-            vals.forEach((v,i)=>{const td=document.createElement('td');td.setAttribute('data-label',labels[i]);td.textContent=v;if(i===5)td.className=Number(d.profit)>=0?'fw-bold text-success':'fw-bold text-danger';tr.appendChild(td)});
-            dailyBody.appendChild(tr);
-        });
-        if(!days.length) dailyBody.innerHTML='<tr><td colspan="6" class="text-center text-secondary py-4">本月尚無資料</td></tr>';
-
-        const rank=document.getElementById('monthlyTopProducts'); rank.innerHTML='';
-        (data.top_products||[]).forEach((d,i)=>{
+    function fillRanking(containerId, items, emptyText) {
+        const rank=document.getElementById(containerId); rank.innerHTML='';
+        (items||[]).forEach((d,i)=>{
             const row=document.createElement('div'); row.className='d-flex align-items-center gap-2 p-2 border-bottom';
             const badge=document.createElement('span'); badge.className='rank-badge'; badge.textContent=i+1;
             const mid=document.createElement('div'); mid.className='flex-grow-1'; const nm=document.createElement('div');nm.className='fw-bold';nm.textContent=d.name; const sub=document.createElement('div');sub.className='small text-secondary';sub.textContent=`${d.quantity} 件`;mid.append(nm,sub);
             const amt=document.createElement('div');amt.className='fw-bold text-primary';amt.textContent=money(d.total_sale); row.append(badge,mid,amt);rank.appendChild(row);
         });
-        if(!(data.top_products||[]).length) rank.innerHTML='<div class="text-secondary text-center py-4">本月尚無銷售</div>';
+        if(!(items||[]).length) rank.innerHTML=`<div class="text-secondary text-center py-4">${emptyText}</div>`;
+    }
 
-        const pay=document.getElementById('monthlyPayments'); pay.innerHTML='';
-        Object.entries(data.payments||{}).sort((a,b)=>Number(b[1])-Number(a[1])).forEach(([name,amount])=>{pay.insertAdjacentHTML('beforeend',`<div class="d-flex justify-content-between py-2 border-bottom"><span class="fw-bold"></span><span class="text-primary fw-bold">${money(amount)}</span></div>`);pay.lastElementChild.firstElementChild.textContent=name;});
-        if(!Object.keys(data.payments||{}).length) pay.innerHTML='<div class="text-secondary">無資料</div>';
+    function fillPayments(containerId, payments) {
+        const box=document.getElementById(containerId); box.innerHTML='';
+        Object.entries(payments||{}).sort((a,b)=>Number(b[1])-Number(a[1])).forEach(([name,amount])=>{box.insertAdjacentHTML('beforeend',`<div class="d-flex justify-content-between py-2 border-bottom"><span class="fw-bold"></span><span class="text-primary fw-bold">${money(amount)}</span></div>`);box.lastElementChild.firstElementChild.textContent=name;});
+        if(!Object.keys(payments||{}).length) box.innerHTML='<div class="text-secondary">無資料</div>';
+    }
 
-        const ex=data.expenses||{}; const defs=[['租金',ex.rent_base],['清潔費',ex.cleaning],['電費',ex.electricity],['其他',ex.other]];
-        const exBox=document.getElementById('monthlyExpenseBreakdown'); exBox.innerHTML='';
-        defs.filter(x=>Number(x[1]||0)>0).forEach(([name,amount])=>{exBox.insertAdjacentHTML('beforeend',`<div class="d-flex justify-content-between py-2 border-bottom"><span class="fw-bold"></span><span class="fw-bold">${money(amount)}</span></div>`);exBox.lastElementChild.firstElementChild.textContent=name;});
-        if(!defs.some(x=>Number(x[1]||0)>0)) exBox.innerHTML='<div class="text-secondary">本月無費用支出</div>';
+    function fillExpenses(containerId, expenses, emptyText) {
+        const ex=expenses||{}; const defs=[['租金',ex.rent_base],['清潔費',ex.cleaning],['電費',ex.electricity],['其他',ex.other]];
+        const box=document.getElementById(containerId); box.innerHTML='';
+        defs.filter(x=>Number(x[1]||0)>0).forEach(([name,amount])=>{box.insertAdjacentHTML('beforeend',`<div class="d-flex justify-content-between py-2 border-bottom"><span class="fw-bold"></span><span class="fw-bold">${money(amount)}</span></div>`);box.lastElementChild.firstElementChild.textContent=name;});
+        if(!defs.some(x=>Number(x[1]||0)>0)) box.innerHTML=`<div class="text-secondary">${emptyText}</div>`;
+    }
+
+    function renderMonthlyReport(month, data) {
+        document.getElementById('monthlyTitle').textContent=`${month} ｜ ${storeDisplayName}`;
+        document.getElementById('monthRevenue').textContent=money(data.revenue);
+        document.getElementById('monthCost').textContent=money(data.cost);
+        document.getElementById('monthExpenses').textContent=money(data.rent);
+        document.getElementById('monthProfit').textContent=money(data.net_profit);
+        document.getElementById('monthQty').textContent=`${Number(data.total_qty||0).toLocaleString('zh-TW')} 件`;
+        document.getElementById('monthOpenDays').textContent=`${Number(data.open_days||0)} 天`;
+        document.getElementById('monthAverage').textContent=money(data.avg_daily_revenue);
+        document.getElementById('monthBestDay').textContent=data.best_day ? `${data.best_day.date.slice(5)} ｜ ${money(data.best_day.revenue)}` : '無資料';
+        renderGoal('month',data.target);
+        const days=data.daily_breakdown||[]; const dailyBody=document.getElementById('monthlyDailyBody'); dailyBody.innerHTML='';
+        days.forEach(d=>{const tr=document.createElement('tr');const vals=[d.date.slice(5),d.orders_count,money(d.revenue),money(d.cost),money(d.expenses),money(d.profit)];const labels=['日期','單數','營業額','成本','支出','淨利'];vals.forEach((v,i)=>{const td=document.createElement('td');td.setAttribute('data-label',labels[i]);td.textContent=v;if(i===5)td.className=Number(d.profit)>=0?'fw-bold text-success':'fw-bold text-danger';tr.appendChild(td)});dailyBody.appendChild(tr);});
+        if(!days.length) dailyBody.innerHTML='<tr><td colspan="6" class="text-center text-secondary py-4">本月尚無資料</td></tr>';
+        fillRanking('monthlyTopProducts',data.top_products,'本月尚無銷售');
+        fillPayments('monthlyPayments',data.payments);
+        fillExpenses('monthlyExpenseBreakdown',data.expenses,'本月無費用支出');
         document.getElementById('monthlyPartners').textContent=data.partners&&data.partners.length?data.partners.join('、'):'無資料';
+    }
+
+    function renderYearlyReport(year, data) {
+        document.getElementById('yearlyTitle').textContent=`${year} 年 ｜ ${storeDisplayName}`;
+        document.getElementById('yearRevenue').textContent=money(data.revenue);
+        document.getElementById('yearCost').textContent=money(data.cost);
+        document.getElementById('yearExpenses').textContent=money(data.rent);
+        document.getElementById('yearProfit').textContent=money(data.net_profit);
+        document.getElementById('yearQty').textContent=`${Number(data.total_qty||0).toLocaleString('zh-TW')} 件`;
+        document.getElementById('yearOrders').textContent=`${Number(data.orders_count||0).toLocaleString('zh-TW')} 單`;
+        renderGoal('year',data.target);
+        document.getElementById('yearActiveMonths').textContent=`${Number(data.active_months||0)} 個月`;
+        document.getElementById('yearAvgRevenue').textContent=money(data.avg_monthly_revenue);
+        document.getElementById('yearAvgProfit').textContent=money(data.avg_monthly_profit);
+        document.getElementById('yearBestMonth').textContent=data.best_month?`${data.best_month.month.slice(5)} 月｜${money(data.best_month.revenue)}`:'無資料';
+        document.getElementById('yearWorstMonth').textContent=data.worst_month?`${data.worst_month.month.slice(5)} 月｜${money(data.worst_month.revenue)}`:'無資料';
+        const yoy=document.getElementById('yearYoY');
+        if(data.yoy_growth===null || data.yoy_growth===undefined){yoy.textContent='無去年資料';yoy.className='fw-bold text-secondary';}
+        else {const val=Number(data.yoy_growth||0);yoy.textContent=`${val>=0?'+':''}${val.toFixed(1)}%`;yoy.className=`fw-bold ${val>=0?'text-success':'text-danger'}`;}
+        const body=document.getElementById('yearlyMonthlyBody'); body.innerHTML='';
+        (data.monthly_breakdown||[]).forEach(d=>{const tr=document.createElement('tr');const vals=[`${Number(d.month.slice(5))} 月`,d.orders_count,money(d.revenue),money(d.cost),money(d.expenses),money(d.profit)];const labels=['月份','單數','營業額','成本','支出','淨利'];vals.forEach((v,i)=>{const td=document.createElement('td');td.setAttribute('data-label',labels[i]);td.textContent=v;if(i===5)td.className=Number(d.profit)>=0?'fw-bold text-success':'fw-bold text-danger';tr.appendChild(td)});body.appendChild(tr);});
+        fillRanking('yearlyTopProducts',data.top_products,'本年度尚無銷售');
+        fillPayments('yearlyPayments',data.payments);
+        fillExpenses('yearlyExpenseBreakdown',data.expenses,'本年度無費用支出');
+        document.getElementById('yearlyPartners').textContent=data.partners&&data.partners.length?data.partners.join('、'):'無資料';
     }
 
     function exportReportToImage(evt) {
         const element=document.getElementById('reportCaptureArea'); const btn=evt.currentTarget; const originalText=btn.innerHTML; const mode=document.getElementById('reportModeSelect').value;
         btn.innerHTML='⏳ 生成中...';btn.disabled=true;
-        html2canvas(element,{useCORS:true,backgroundColor:'#ffffff',scale:2}).then(canvas=>{const link=document.createElement('a');const target=mode==='daily'?document.getElementById('reportDateInput').value:document.getElementById('reportMonthInput').value;link.download=`${storeDisplayName}_${target}_${mode==='daily'?'日報':'月報'}.png`;link.href=canvas.toDataURL('image/png');link.click();btn.innerHTML=originalText;btn.disabled=false;}).catch(()=>{alert('❌ 截圖失敗');btn.innerHTML=originalText;btn.disabled=false;});
+        html2canvas(element,{useCORS:true,backgroundColor:'#ffffff',scale:2}).then(canvas=>{const link=document.createElement('a');const target=currentReportPeriod();const label=mode==='daily'?'日報':mode==='monthly'?'月報':'年報';link.download=`${storeDisplayName}_${target}_${label}.png`;link.href=canvas.toDataURL('image/png');link.click();btn.innerHTML=originalText;btn.disabled=false;}).catch(()=>{alert('❌ 截圖失敗');btn.innerHTML=originalText;btn.disabled=false;});
     }
 
     async function loadAuditLogs() {

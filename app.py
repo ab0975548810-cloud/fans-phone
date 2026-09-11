@@ -6,6 +6,7 @@ import threading
 import time
 import secrets
 import json
+import calendar
 from datetime import datetime
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -312,6 +313,14 @@ def init_db():
                 reopened_by TEXT DEFAULT NULL,
                 reopen_reason TEXT DEFAULT '',
                 reopen_count INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS report_targets (
+                period TEXT PRIMARY KEY,
+                target_amount REAL NOT NULL DEFAULT 0,
+                updated_at TEXT DEFAULT NULL,
+                updated_by TEXT DEFAULT NULL
             )
         """)
         cursor.execute("""
@@ -1720,15 +1729,150 @@ def audit_logs_api():
         conn.close()
 
 
+@app.route("/api/report_target", methods=["GET", "POST"])
+@require_auth
+def report_target_api():
+    data = request.get_json(silent=True) or {}
+    mode = str((data.get("mode") if request.method == "POST" else request.args.get("mode")) or "monthly").strip()
+    period = str((data.get("period") if request.method == "POST" else request.args.get("period")) or "").strip()
+    if mode not in {"monthly", "yearly"}:
+        return jsonify({"message": "目標類型只支援月目標或年目標"}), 400
+    try:
+        if mode == "monthly":
+            datetime.strptime(period, "%Y-%m")
+        else:
+            if len(period) != 4:
+                raise ValueError
+            year = int(period)
+            if year < 2000 or year > 2200:
+                raise ValueError
+    except (ValueError, TypeError):
+        return jsonify({"message": "目標期間格式錯誤"}), 400
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        if request.method == "GET":
+            row = cursor.execute(
+                "SELECT period, target_amount, updated_at, updated_by FROM report_targets WHERE period=?",
+                (period,),
+            ).fetchone()
+            if row:
+                return jsonify(dict(row))
+            return jsonify({"period": period, "target_amount": 0, "updated_at": None, "updated_by": None})
+
+        try:
+            amount = max(0.0, float(data.get("target_amount", 0) or 0))
+        except (TypeError, ValueError):
+            return jsonify({"message": "目標業績格式錯誤"}), 400
+        now_str = now_tw().strftime("%Y-%m-%d %H:%M:%S")
+        actor = current_actor()
+        cursor.execute("""
+            INSERT INTO report_targets (period, target_amount, updated_at, updated_by)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(period) DO UPDATE SET
+                target_amount=excluded.target_amount,
+                updated_at=excluded.updated_at,
+                updated_by=excluded.updated_by
+        """, (period, amount, now_str, actor))
+        label = "月目標" if mode == "monthly" else "年目標"
+        log_action(cursor, f"設定{label}", f"{period}；${amount:g}")
+        conn.commit()
+        return jsonify({"status": "success", "period": period, "target_amount": amount, "updated_at": now_str, "updated_by": actor})
+    finally:
+        conn.close()
+
+
+def _target_progress(cursor, mode, target, actual_revenue):
+    if mode not in {"monthly", "yearly"}:
+        return None
+    row = cursor.execute(
+        "SELECT target_amount, updated_at, updated_by FROM report_targets WHERE period=?",
+        (target,),
+    ).fetchone()
+    target_amount = float(row["target_amount"] or 0) if row else 0.0
+    now_date = now_tw().date()
+
+    if mode == "monthly":
+        year, month = map(int, target.split("-"))
+        total_days = calendar.monthrange(year, month)[1]
+        start_date = datetime(year, month, 1).date()
+        end_date = datetime(year, month, total_days).date()
+        if now_date < start_date:
+            elapsed_days, remaining_days = 0, total_days
+        elif now_date > end_date:
+            elapsed_days, remaining_days = total_days, 0
+        else:
+            elapsed_days = now_date.day
+            remaining_days = total_days - now_date.day + 1
+    else:
+        year = int(target)
+        total_days = 366 if calendar.isleap(year) else 365
+        start_date = datetime(year, 1, 1).date()
+        end_date = datetime(year, 12, 31).date()
+        if now_date < start_date:
+            elapsed_days, remaining_days = 0, total_days
+        elif now_date > end_date:
+            elapsed_days, remaining_days = total_days, 0
+        else:
+            elapsed_days = int(now_date.strftime("%j"))
+            remaining_days = total_days - elapsed_days + 1
+
+    expected_revenue = target_amount * (elapsed_days / total_days) if target_amount > 0 and total_days else 0.0
+    difference = actual_revenue - target_amount
+    gap = max(target_amount - actual_revenue, 0.0)
+    achievement_rate = (actual_revenue / target_amount * 100.0) if target_amount > 0 else 0.0
+    expected_progress_rate = (elapsed_days / total_days * 100.0) if total_days else 0.0
+    pace_difference = actual_revenue - expected_revenue
+    needed_per_day = (gap / remaining_days) if target_amount > 0 and remaining_days > 0 else 0.0
+    return {
+        "target_amount": target_amount,
+        "actual_revenue": float(actual_revenue or 0),
+        "difference": difference,
+        "gap": gap,
+        "achievement_rate": achievement_rate,
+        "expected_revenue": expected_revenue,
+        "expected_progress_rate": expected_progress_rate,
+        "pace_difference": pace_difference,
+        "remaining_days": remaining_days,
+        "needed_per_day": needed_per_day,
+        "updated_at": row["updated_at"] if row else None,
+        "updated_by": row["updated_by"] if row else None,
+    }
+
+
 @app.route("/api/report", methods=["GET"])
 @require_auth
 def handle_report():
     mode = request.args.get("mode", "daily")
-    target = request.args.get("date") if mode == "daily" else request.args.get("month")
-    if not target:
-        target = now_tw().strftime("%Y-%m-%d" if mode == "daily" else "%Y-%m")
-    query_date = target if mode == "daily" else f"{target}-%"
-    op = "=" if mode == "daily" else "LIKE"
+    if mode not in {"daily", "monthly", "yearly"}:
+        return jsonify({"message": "報表類型錯誤"}), 400
+
+    if mode == "daily":
+        target = request.args.get("date") or now_tw().strftime("%Y-%m-%d")
+        try:
+            datetime.strptime(target, "%Y-%m-%d")
+        except ValueError:
+            return jsonify({"message": "日期格式錯誤"}), 400
+        query_date, op = target, "="
+    elif mode == "monthly":
+        target = request.args.get("month") or now_tw().strftime("%Y-%m")
+        try:
+            datetime.strptime(target, "%Y-%m")
+        except ValueError:
+            return jsonify({"message": "月份格式錯誤"}), 400
+        query_date, op = f"{target}-%", "LIKE"
+    else:
+        target = request.args.get("year") or now_tw().strftime("%Y")
+        try:
+            if len(target) != 4:
+                raise ValueError
+            year_int = int(target)
+            if year_int < 2000 or year_int > 2200:
+                raise ValueError
+        except (ValueError, TypeError):
+            return jsonify({"message": "年份格式錯誤"}), 400
+        query_date, op = f"{target}-%", "LIKE"
 
     conn = get_db_connection()
     try:
@@ -1755,33 +1899,31 @@ def handle_report():
             f"SELECT payment_method AS name, SUM(total_revenue) AS total FROM orders WHERE date {op} ? AND is_void=0 GROUP BY payment_method",
             (query_date,),
         ).fetchall()
+
         if mode == "daily":
+            audit_like, order_where, restock_like = f"{target}%", target, f"{target}%"
             partner_names = {r["partner_name"] for r in cursor.execute(
-                "SELECT DISTINCT partner_name FROM audit_logs WHERE created_at LIKE ? AND partner_name!=''",
-                (f"{target}%",),
+                "SELECT DISTINCT partner_name FROM audit_logs WHERE created_at LIKE ? AND partner_name!=''", (audit_like,)
             ).fetchall()}
             partner_names.update(r["partner_name"] for r in cursor.execute(
-                "SELECT DISTINCT partner_name FROM orders WHERE date=? AND partner_name!=''",
-                (target,),
+                "SELECT DISTINCT partner_name FROM orders WHERE date=? AND partner_name!=''", (order_where,)
             ).fetchall())
             partner_names.update(r["partner_name"] for r in cursor.execute(
-                "SELECT DISTINCT partner_name FROM restock_logs WHERE date LIKE ? AND partner_name!=''",
-                (f"{target}%",),
+                "SELECT DISTINCT partner_name FROM restock_logs WHERE date LIKE ? AND partner_name!=''", (restock_like,)
             ).fetchall())
         else:
+            prefix = f"{target}-%"
             partner_names = {r["partner_name"] for r in cursor.execute(
-                "SELECT DISTINCT partner_name FROM audit_logs WHERE created_at LIKE ? AND partner_name!=''",
-                (f"{target}-%",),
+                "SELECT DISTINCT partner_name FROM audit_logs WHERE created_at LIKE ? AND partner_name!=''", (prefix,)
             ).fetchall()}
             partner_names.update(r["partner_name"] for r in cursor.execute(
-                "SELECT DISTINCT partner_name FROM orders WHERE date LIKE ? AND partner_name!=''",
-                (f"{target}-%",),
+                "SELECT DISTINCT partner_name FROM orders WHERE date LIKE ? AND partner_name!=''", (prefix,)
             ).fetchall())
             partner_names.update(r["partner_name"] for r in cursor.execute(
-                "SELECT DISTINCT partner_name FROM restock_logs WHERE date LIKE ? AND partner_name!=''",
-                (f"{target}-%",),
+                "SELECT DISTINCT partner_name FROM restock_logs WHERE date LIKE ? AND partner_name!=''", (prefix,)
             ).fetchall())
         partner_names = sorted(partner_names)
+
         main_cats = cursor.execute(f"""
             SELECT p.name, SUM(oi.quantity) AS qty
             FROM order_items oi
@@ -1796,28 +1938,31 @@ def handle_report():
         revenue = float(summary["rev"] or 0)
         cost = float(summary["cos"] or 0)
         rent = float(rent_row["amount"] or 0)
+        total_qty = sum(int(r["quantity"] or 0) for r in details)
+        top_products = []
+        if mode in {"monthly", "yearly"}:
+            top_products = sorted(
+                [dict(r) for r in details],
+                key=lambda x: (float(x.get("total_sale") or 0), int(x.get("quantity") or 0)),
+                reverse=True,
+            )[:10]
 
         daily_breakdown = []
-        top_products = []
         best_day = None
         open_days = 0
-        avg_daily_revenue = 0
+        avg_daily_revenue = 0.0
         if mode == "monthly":
             sales_by_day = {
                 r["date"]: r for r in cursor.execute("""
                     SELECT o.date, SUM(o.total_revenue) AS revenue, SUM(o.total_cost) AS cost, COUNT(*) AS orders_count
                     FROM orders o
                     WHERE o.date LIKE ? AND o.is_void=0
-                    GROUP BY o.date
-                    ORDER BY o.date ASC
+                    GROUP BY o.date ORDER BY o.date ASC
                 """, (query_date,)).fetchall()
             }
             expense_by_day = {
                 r["date"]: float(r["amount"] or 0)
-                for r in cursor.execute(
-                    "SELECT date, amount FROM rent WHERE date LIKE ? ORDER BY date ASC",
-                    (query_date,),
-                ).fetchall()
+                for r in cursor.execute("SELECT date, amount FROM rent WHERE date LIKE ? ORDER BY date ASC", (query_date,)).fetchall()
             }
             all_dates = sorted(set(sales_by_day) | set(expense_by_day))
             for day in all_dates:
@@ -1834,16 +1979,80 @@ def handle_report():
                     "profit": day_rev - day_cost - day_exp,
                     "orders_count": day_orders,
                 })
-            open_days = sum(1 for row in daily_breakdown if row["orders_count"] > 0)
-            avg_daily_revenue = revenue / open_days if open_days else 0
             sales_days = [row for row in daily_breakdown if row["orders_count"] > 0]
+            open_days = len(sales_days)
+            avg_daily_revenue = revenue / open_days if open_days else 0.0
             if sales_days:
                 best_day = max(sales_days, key=lambda x: x["revenue"])
-            top_products = sorted(
-                [dict(r) for r in details],
-                key=lambda x: (float(x.get("total_sale") or 0), int(x.get("quantity") or 0)),
-                reverse=True,
-            )[:10]
+
+        monthly_breakdown = []
+        active_months = 0
+        avg_monthly_revenue = 0.0
+        avg_monthly_profit = 0.0
+        best_month = None
+        worst_month = None
+        previous_year_revenue = 0.0
+        yoy_growth = None
+        if mode == "yearly":
+            sales_by_month = {
+                r["month"]: r for r in cursor.execute("""
+                    SELECT substr(date,1,7) AS month, SUM(total_revenue) AS revenue,
+                           SUM(total_cost) AS cost, COUNT(*) AS orders_count
+                    FROM orders
+                    WHERE date LIKE ? AND is_void=0
+                    GROUP BY substr(date,1,7) ORDER BY month ASC
+                """, (query_date,)).fetchall()
+            }
+            expense_by_month = {
+                r["month"]: float(r["amount"] or 0)
+                for r in cursor.execute("""
+                    SELECT substr(date,1,7) AS month, SUM(amount) AS amount
+                    FROM rent WHERE date LIKE ? GROUP BY substr(date,1,7) ORDER BY month ASC
+                """, (query_date,)).fetchall()
+            }
+            for month_num in range(1, 13):
+                key = f"{target}-{month_num:02d}"
+                r = sales_by_month.get(key)
+                m_rev = float(r["revenue"] or 0) if r else 0.0
+                m_cost = float(r["cost"] or 0) if r else 0.0
+                m_orders = int(r["orders_count"] or 0) if r else 0
+                m_exp = expense_by_month.get(key, 0.0)
+                monthly_breakdown.append({
+                    "month": key,
+                    "revenue": m_rev,
+                    "cost": m_cost,
+                    "expenses": m_exp,
+                    "profit": m_rev - m_cost - m_exp,
+                    "orders_count": m_orders,
+                })
+            sales_months = [row for row in monthly_breakdown if row["orders_count"] > 0]
+            active_months = len(sales_months)
+            avg_monthly_revenue = revenue / active_months if active_months else 0.0
+            avg_monthly_profit = sum(row["profit"] for row in sales_months) / active_months if active_months else 0.0
+            if sales_months:
+                best_month = max(sales_months, key=lambda x: x["revenue"])
+                worst_month = min(sales_months, key=lambda x: x["revenue"])
+            prev_year = str(int(target) - 1)
+            current_year = now_tw().year
+            if int(target) == current_year:
+                today = now_tw().date()
+                try:
+                    prev_cutoff = datetime(int(prev_year), today.month, today.day).strftime("%Y-%m-%d")
+                except ValueError:
+                    prev_cutoff = datetime(int(prev_year), today.month, 28).strftime("%Y-%m-%d")
+                prev = cursor.execute(
+                    "SELECT COALESCE(SUM(total_revenue),0) AS revenue FROM orders WHERE date>=? AND date<=? AND is_void=0",
+                    (f"{prev_year}-01-01", prev_cutoff),
+                ).fetchone()
+            else:
+                prev = cursor.execute(
+                    "SELECT COALESCE(SUM(total_revenue),0) AS revenue FROM orders WHERE date LIKE ? AND is_void=0",
+                    (f"{prev_year}-%",),
+                ).fetchone()
+            previous_year_revenue = float(prev["revenue"] or 0)
+            if previous_year_revenue > 0:
+                yoy_growth = (revenue - previous_year_revenue) / previous_year_revenue * 100.0
+
         expenses = {
             "rent_base": float(rent_row["rent_base"] or 0),
             "cleaning": float(rent_row["cleaning"] or 0),
@@ -1861,22 +2070,36 @@ def handle_report():
                         business_day["payment_summary"] = json.loads(business_day["payment_summary"])
                     except Exception:
                         business_day["payment_summary"] = {}
+
+        target_progress = _target_progress(cursor, mode, target, revenue)
         return jsonify({
+            "mode": mode,
+            "period": target,
             "revenue": revenue,
             "cost": cost,
             "rent": rent,
             "expenses": expenses,
             "net_profit": revenue - cost - rent,
             "orders_count": int(summary["orders_cnt"] or 0),
+            "total_qty": total_qty,
             "details": [dict(r) for r in details],
             "main_categories": [dict(r) for r in main_cats],
-            "payments": {r["name"]: r["total"] for r in pm_rows},
+            "payments": {r["name"]: float(r["total"] or 0) for r in pm_rows},
             "partners": partner_names,
             "daily_breakdown": daily_breakdown,
             "top_products": top_products,
             "open_days": open_days,
             "avg_daily_revenue": avg_daily_revenue,
             "best_day": best_day,
+            "monthly_breakdown": monthly_breakdown,
+            "active_months": active_months,
+            "avg_monthly_revenue": avg_monthly_revenue,
+            "avg_monthly_profit": avg_monthly_profit,
+            "best_month": best_month,
+            "worst_month": worst_month,
+            "previous_year_revenue": previous_year_revenue,
+            "yoy_growth": yoy_growth,
+            "target": target_progress,
             "business_day": business_day,
         })
     finally:
