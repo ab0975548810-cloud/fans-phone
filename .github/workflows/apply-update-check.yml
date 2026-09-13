@@ -24,25 +24,26 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import json
+          import re
 
           app = Path('app.py')
           s = app.read_text(encoding='utf-8')
-          if 'APP_VERSION = "1.5.2"' not in s:
-              s = s.replace('import calendar\n', 'import calendar\nimport urllib.request\nimport urllib.error\n')
+          if 'import urllib.request' not in s:
+              s = s.replace('import calendar\n', 'import calendar\nimport urllib.request\nimport urllib.error\n', 1)
+          s = s.replace('APP_VERSION = "1.5.1"', 'APP_VERSION = "1.5.2"', 1)
+          if 'UPDATE_MANIFEST_URL' not in s:
               s = s.replace(
-                  'APP_VERSION = "1.5.1"\n',
-                  'APP_VERSION = "1.5.2"\nUPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/ab0975548810-cloud/fans-phone/main/version.json"\n'
+                  'APP_VERSION = "1.5.2"\n',
+                  'APP_VERSION = "1.5.2"\nUPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/ab0975548810-cloud/fans-phone/main/version.json"\n',
+                  1,
               )
 
           if 'def _check_update_payload():' not in s:
-              marker = '''@app.route("/api/system/status", methods=["GET"])
-          @require_auth
-          def system_status_api():
-              return jsonify(_backup_status_payload())
-
-
-          '''
-              replacement = '''def _version_tuple(version):
+              marker = '@app.route("/api/system/status", methods=["GET"])'
+              pos = s.find(marker)
+              if pos < 0:
+                  raise SystemExit('app.py system status marker not found')
+              block = '''def _version_tuple(version):
               parts = []
               for part in str(version or "0").strip().lstrip("vV").split("."):
                   digits = "".join(ch for ch in part if ch.isdigit())
@@ -81,59 +82,66 @@ jobs:
                   }
 
 
-          @app.route("/api/system/status", methods=["GET"])
-          @require_auth
-          def system_status_api():
-              return jsonify(_backup_status_payload())
+          '''
+              s = s[:pos] + block + s[pos:]
 
-
-          @app.route("/api/system/update_check", methods=["GET"])
+          if '/api/system/update_check' not in s:
+              pattern = re.compile(
+                  r'(@app\.route\("/api/system/status", methods=\["GET"\]\)\s+@require_auth\s+def system_status_api\(\):\s+return jsonify\(_backup_status_payload\(\)\)\s*)',
+                  re.S,
+              )
+              match = pattern.search(s)
+              if not match:
+                  raise SystemExit('app.py system status function not found')
+              route = '''\n\n@app.route("/api/system/update_check", methods=["GET"])
           @require_auth
           def system_update_check_api():
               payload = _check_update_payload()
               if payload.get("error"):
                   return jsonify(payload), 503
               return jsonify(payload)
-
-
           '''
-              if marker not in s:
-                  raise SystemExit('app.py system status marker not found')
-              s = s.replace(marker, replacement, 1)
+              s = s[:match.end()] + route + s[match.end():]
           app.write_text(s, encoding='utf-8')
 
           html = Path('templates/index.html')
           h = html.read_text(encoding='utf-8')
           if 'id="systemUpdateText"' not in h:
-              marker = '''                <div class="d-grid gap-2 d-sm-flex">
-                      <button type="button" class="btn btn-outline-primary fw-bold flex-fill" onclick="createManualBackup(this)">🛡️ 立即備份</button>
-                      <button type="button" class="btn btn-outline-success fw-bold flex-fill" onclick="downloadDatabaseBackup()">⬇️ 下載備份</button>
-                  </div>
-                  <div class="small text-secondary mt-2">更新新版時只更新程式，<strong>/data/pos.db 不會跟著重建</strong>。建議每次更新前先按「立即備份」，並定期下載一份到電腦或雲端。</div>
-          '''
-              replacement = '''                <div class="border rounded p-3 bg-white mb-2">
-                      <div class="d-flex justify-content-between align-items-center gap-2">
-                          <span class="text-secondary">更新狀態</span>
-                          <span class="fw-bold text-secondary text-end" id="systemUpdateText">尚未檢查</span>
-                      </div>
-                      <div class="small text-secondary mt-2 d-none" id="systemUpdateNotes"></div>
-                  </div>
-                  <div class="d-grid gap-2 mb-2">
-                      <button type="button" class="btn btn-outline-dark fw-bold" onclick="checkForUpdates(this)">🔄 檢查更新</button>
-                  </div>
-                  <div class="d-grid gap-2 d-sm-flex">
-                      <button type="button" class="btn btn-outline-primary fw-bold flex-fill" onclick="createManualBackup(this)">🛡️ 立即備份</button>
-                      <button type="button" class="btn btn-outline-success fw-bold flex-fill" onclick="downloadDatabaseBackup()">⬇️ 下載備份</button>
-                  </div>
-                  <div class="small text-secondary mt-2">「檢查更新」只確認是否有新版，不會直接安裝。真正更新仍由 GitHub → Zeabur 重新部署；<strong>/data/pos.db 不會跟著重建</strong>。建議每次更新前先按「立即備份」。</div>
-          '''
-              if marker not in h:
-                  raise SystemExit('templates/index.html settings marker not found')
-              h = h.replace(marker, replacement, 1)
+              pattern = re.compile(
+                  r'(?P<indent>[ \t]*)<div class="d-grid gap-2 d-sm-flex">\s*'
+                  r'<button[^>]+onclick="createManualBackup\(this\)"[^>]*>.*?</button>\s*'
+                  r'<button[^>]+onclick="downloadDatabaseBackup\(\)"[^>]*>.*?</button>\s*'
+                  r'</div>\s*'
+                  r'<div class="small text-secondary mt-2">更新新版時只更新程式，<strong>/data/pos\.db 不會跟著重建</strong>。建議每次更新前先按「立即備份」，並定期下載一份到電腦或雲端。</div>',
+                  re.S,
+              )
+              match = pattern.search(h)
+              if not match:
+                  raise SystemExit('templates/index.html settings block not found')
+              i = match.group('indent')
+              replacement = f'''{i}<div class="border rounded p-3 bg-white mb-2">
+          {i}    <div class="d-flex justify-content-between align-items-center gap-2">
+          {i}        <span class="text-secondary">更新狀態</span>
+          {i}        <span class="fw-bold text-secondary text-end" id="systemUpdateText">尚未檢查</span>
+          {i}    </div>
+          {i}    <div class="small text-secondary mt-2 d-none" id="systemUpdateNotes"></div>
+          {i}</div>
+          {i}<div class="d-grid gap-2 mb-2">
+          {i}    <button type="button" class="btn btn-outline-dark fw-bold" onclick="checkForUpdates(this)">🔄 檢查更新</button>
+          {i}</div>
+          {i}<div class="d-grid gap-2 d-sm-flex">
+          {i}    <button type="button" class="btn btn-outline-primary fw-bold flex-fill" onclick="createManualBackup(this)">🛡️ 立即備份</button>
+          {i}    <button type="button" class="btn btn-outline-success fw-bold flex-fill" onclick="downloadDatabaseBackup()">⬇️ 下載備份</button>
+          {i}</div>
+          {i}<div class="small text-secondary mt-2">「檢查更新」只確認是否有新版，不會直接安裝。真正更新仍由 GitHub → Zeabur 重新部署；<strong>/data/pos.db 不會跟著重建</strong>。建議每次更新前先按「立即備份」。</div>'''
+              h = h[:match.start()] + replacement + h[match.end():]
 
           if 'async function checkForUpdates(btn)' not in h:
-              marker = '    async function createManualBackup(btn) {\n'
-              replacement = '''    async function checkForUpdates(btn) {
+              marker = '    async function createManualBackup(btn) {'
+              pos = h.find(marker)
+              if pos < 0:
+                  raise SystemExit('templates/index.html JS marker not found')
+              js = '''    async function checkForUpdates(btn) {
               const original = btn.innerHTML;
               const textEl = document.getElementById('systemUpdateText');
               const notesEl = document.getElementById('systemUpdateNotes');
@@ -166,11 +174,8 @@ jobs:
               }
           }
 
-              async function createManualBackup(btn) {
           '''
-              if marker not in h:
-                  raise SystemExit('templates/index.html JS marker not found')
-              h = h.replace(marker, replacement, 1)
+              h = h[:pos] + js + h[pos:]
           html.write_text(h, encoding='utf-8')
 
           Path('version.json').write_text(json.dumps({
