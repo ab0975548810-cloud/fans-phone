@@ -8,8 +8,52 @@
     <link href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
     <style>
-        :root { --pos-pink: #E83E8C; --pos-pink-dark: #C2185B; }
-        body { background-color: #f8f9fa; font-family: "Microsoft JhengHei", "微軟正黑體", sans-serif; }
+        :root {
+            --pos-pink: #E83E8C;
+            --pos-pink-dark: #C2185B;
+            --pos-bg: #f8f9fa;
+            --pos-surface: #ffffff;
+            --pos-text: #212529;
+            --pos-border: #dee2e6;
+            --pos-muted: #6c757d;
+        }
+        body[data-pos-theme="pink"] { --pos-pink:#E83E8C; --pos-pink-dark:#C2185B; --pos-bg:#f8f9fa; --pos-surface:#ffffff; --pos-text:#212529; --pos-border:#dee2e6; --pos-muted:#6c757d; }
+        body[data-pos-theme="blue"] { --pos-pink:#1976D2; --pos-pink-dark:#0D47A1; --pos-bg:#F4F8FC; --pos-surface:#ffffff; --pos-text:#172033; --pos-border:#D7E3F2; --pos-muted:#64748B; }
+        body[data-pos-theme="mint"] { --pos-pink:#2F9E7A; --pos-pink-dark:#176B57; --pos-bg:#F2FBF7; --pos-surface:#ffffff; --pos-text:#17352C; --pos-border:#CFE9DF; --pos-muted:#607D73; }
+        body[data-pos-theme="latte"] { --pos-pink:#A8744F; --pos-pink-dark:#6F4E37; --pos-bg:#FAF6F1; --pos-surface:#FFFDFC; --pos-text:#3C2F2A; --pos-border:#E6D8CB; --pos-muted:#7B6B61; }
+        body[data-pos-theme="purple"] { --pos-pink:#7E57C2; --pos-pink-dark:#512DA8; --pos-bg:#F7F3FC; --pos-surface:#ffffff; --pos-text:#2F2440; --pos-border:#DED2EF; --pos-muted:#71647F; }
+        body[data-pos-theme="dark"] { --pos-pink:#8B7CFF; --pos-pink-dark:#6757D9; --pos-bg:#14151A; --pos-surface:#1F2128; --pos-text:#F5F5F5; --pos-border:#343842; --pos-muted:#B5BAC5; color-scheme:dark; }
+        body { background-color: var(--pos-bg); color: var(--pos-text); font-family: "Microsoft JhengHei", "微軟正黑體", sans-serif; transition: background-color .2s ease, color .2s ease; }
+        .theme-picker-grid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.5rem; }
+        .theme-option { border:2px solid var(--pos-border); background:var(--pos-surface); color:var(--pos-text); border-radius:.75rem; padding:.65rem .45rem; font-weight:700; text-align:center; cursor:pointer; transition:.15s; }
+        .theme-option:hover { transform:translateY(-1px); }
+        .theme-option.active { border-color:var(--pos-pink); box-shadow:0 0 0 2px rgba(0,0,0,.06); }
+        .theme-swatch { width:24px; height:24px; border-radius:50%; display:inline-block; vertical-align:middle; margin-right:.35rem; border:2px solid rgba(255,255,255,.75); box-shadow:0 0 0 1px rgba(0,0,0,.14); }
+        body[data-pos-theme="dark"] .modal-content,
+        body[data-pos-theme="dark"] .card,
+        body[data-pos-theme="dark"] .list-group-item { background-color:var(--pos-surface); color:var(--pos-text); border-color:var(--pos-border); }
+        body[data-pos-theme="dark"] .bg-white,
+        body[data-pos-theme="dark"] .bg-light,
+        body[data-pos-theme="dark"] .table-light { background-color:#242730 !important; color:var(--pos-text) !important; }
+        body[data-pos-theme="dark"] .text-dark { color:#F5F5F5 !important; }
+        body[data-pos-theme="dark"] .text-secondary { color:var(--pos-muted) !important; }
+        body[data-pos-theme="dark"] .form-control,
+        body[data-pos-theme="dark"] .form-select { background-color:#191B21; color:#F5F5F5; border-color:var(--pos-border); }
+        body[data-pos-theme="dark"] .form-control::placeholder { color:#8F96A3; }
+        body[data-pos-theme="dark"] .table { --bs-table-bg:transparent; --bs-table-color:#F5F5F5; --bs-table-border-color:var(--pos-border); }
+        body[data-pos-theme="dark"] .nav-tabs .nav-link { color:#D7DAE0; }
+        body[data-pos-theme="dark"] .nav-tabs .nav-link.active { background-color:var(--pos-surface); color:var(--pos-pink); border-color:var(--pos-border) var(--pos-border) var(--pos-surface); }
+        body[data-pos-theme="dark"] .smart-dropdown-menu,
+        body[data-pos-theme="dark"] .variant-sheet { background-color:var(--pos-surface); color:var(--pos-text); }
+        body[data-pos-theme="dark"] .smart-dropdown-item { color:var(--pos-text); border-color:var(--pos-border); }
+        #reportCaptureArea, #handwrittenReportContainer { --pos-pink:#E83E8C; --pos-pink-dark:#C2185B; }
+        body[data-pos-theme="dark"] #reportCaptureArea,
+        body[data-pos-theme="dark"] #reportCaptureArea .bg-white,
+        body[data-pos-theme="dark"] #reportCaptureArea .bg-light,
+        body[data-pos-theme="dark"] #reportCaptureArea .table-light { background-color:#ffffff !important; color:#212529 !important; }
+        body[data-pos-theme="dark"] #reportCaptureArea .text-dark { color:#212529 !important; }
+        body[data-pos-theme="dark"] #reportCaptureArea .text-secondary { color:#6c757d !important; }
+        @media (max-width: 576px) { .theme-picker-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } }
         .nav-tabs { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; white-space: nowrap; -webkit-overflow-scrolling: touch; }
         .nav-tabs::-webkit-scrollbar { display: none; }
         .nav-tabs .nav-link { font-size: 1.1rem; font-weight: bold; color: #495057; }
@@ -680,6 +724,21 @@
                 <div class="input-group mb-2"><input id="newPaymentMethod" class="form-control" placeholder="新增付款方式"><button class="btn btn-outline-dark fw-bold" onclick="addPaymentMethod()">新增</button></div>
                 <div id="paymentMethodSettingsList" class="d-flex flex-wrap gap-2"></div>
                 <hr>
+                <div class="fw-bold mb-2">🎨 介面主題</div>
+                <div class="small text-secondary mb-2">只會改這台裝置的 POS 外觀，不會影響其他手機／平板；營業報表仍維持原本粉色品牌。</div>
+                <div class="theme-picker-grid mb-2" id="posThemePicker">
+                    <button type="button" class="theme-option" data-pos-theme-choice="pink" onclick="selectPosTheme('pink')"><span class="theme-swatch" style="background:#E83E8C"></span>櫻花粉</button>
+                    <button type="button" class="theme-option" data-pos-theme-choice="blue" onclick="selectPosTheme('blue')"><span class="theme-swatch" style="background:#1976D2"></span>海洋藍</button>
+                    <button type="button" class="theme-option" data-pos-theme-choice="mint" onclick="selectPosTheme('mint')"><span class="theme-swatch" style="background:#2F9E7A"></span>薄荷綠</button>
+                    <button type="button" class="theme-option" data-pos-theme-choice="latte" onclick="selectPosTheme('latte')"><span class="theme-swatch" style="background:#A8744F"></span>奶茶棕</button>
+                    <button type="button" class="theme-option" data-pos-theme-choice="purple" onclick="selectPosTheme('purple')"><span class="theme-swatch" style="background:#7E57C2"></span>葡萄紫</button>
+                    <button type="button" class="theme-option" data-pos-theme-choice="dark" onclick="selectPosTheme('dark')"><span class="theme-swatch" style="background:#1F2128"></span>🌙 深色</button>
+                </div>
+                <div class="d-flex justify-content-between align-items-center gap-2 p-2 border rounded mb-2">
+                    <span class="small">目前：<strong id="currentPosThemeText">櫻花粉</strong></span>
+                    <button type="button" class="btn btn-sm btn-outline-secondary fw-bold" onclick="randomizePosTheme()">🎲 今日心情隨機</button>
+                </div>
+                <hr>
                 <div class="fw-bold mb-2">🛠️ 系統與備份</div>
                 <div class="border rounded p-3 bg-light mb-2">
                     <div class="d-flex justify-content-between mb-1"><span class="text-secondary">目前版本</span><span class="fw-bold" id="systemVersionText">讀取中...</span></div>
@@ -912,6 +971,53 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+    const POS_THEME_KEY = 'fans_phone_pos_theme';
+    const POS_THEMES = {
+        pink: {name:'櫻花粉'},
+        blue: {name:'海洋藍'},
+        mint: {name:'薄荷綠'},
+        latte: {name:'奶茶棕'},
+        purple: {name:'葡萄紫'},
+        dark: {name:'🌙 深色模式'}
+    };
+    let currentPosTheme = 'pink';
+
+    function renderPosThemePicker() {
+        document.querySelectorAll('[data-pos-theme-choice]').forEach(btn => {
+            const active = btn.dataset.posThemeChoice === currentPosTheme;
+            btn.classList.toggle('active', active);
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        const label = document.getElementById('currentPosThemeText');
+        if(label) label.textContent = (POS_THEMES[currentPosTheme] || POS_THEMES.pink).name;
+    }
+
+    function applyPosTheme(theme, persist = true) {
+        const safeTheme = POS_THEMES[theme] ? theme : 'pink';
+        currentPosTheme = safeTheme;
+        document.body.setAttribute('data-pos-theme', safeTheme);
+        if(persist) {
+            try { localStorage.setItem(POS_THEME_KEY, safeTheme); } catch(e) {}
+        }
+        renderPosThemePicker();
+    }
+
+    function initPosTheme() {
+        let saved = 'pink';
+        try { saved = localStorage.getItem(POS_THEME_KEY) || 'pink'; } catch(e) {}
+        applyPosTheme(saved, false);
+    }
+
+    function selectPosTheme(theme) { applyPosTheme(theme, true); }
+
+    function randomizePosTheme() {
+        const choices = Object.keys(POS_THEMES).filter(x => x !== currentPosTheme);
+        const next = choices[Math.floor(Math.random() * choices.length)] || 'pink';
+        applyPosTheme(next, true);
+    }
+
+    initPosTheme();
+
     let csrfToken = '';
     const originalFetch = window.fetch;
     window.fetch = async function(resource, config = {}) {
@@ -1151,6 +1257,7 @@
         document.getElementById('settingsStoreName').value = data.store_name || '';
         document.getElementById('settingsReportTitle').value = data.report_title || '';
         document.getElementById('newPaymentMethod').value = '';
+        renderPosThemePicker();
         await Promise.all([renderPaymentMethodSettings(), loadSystemStatus()]);
         settingsModalObj.show();
     }

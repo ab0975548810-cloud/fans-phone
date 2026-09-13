@@ -19,7 +19,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 TW_TZ = ZoneInfo("Asia/Taipei")
 DB_NAME = "pos.db"
-APP_VERSION = "1.5.4"
+APP_VERSION = "1.5.5"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/ab0975548810-cloud/fans-phone/main/version.json"
 
 
