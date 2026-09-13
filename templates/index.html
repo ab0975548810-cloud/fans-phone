@@ -912,24 +912,19 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+    let csrfToken = '';
     const originalFetch = window.fetch;
     window.fetch = async function(resource, config = {}) {
+        const method = String(config.method || 'GET').toUpperCase();
+        const sameOrigin = typeof resource !== 'string' || resource.startsWith('/') || resource.startsWith(window.location.origin);
         if (!config.headers) config.headers = {};
-        config.headers = {
-            ...config.headers,
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache'
-        };
-        if (!config.method || config.method.toUpperCase() === 'GET') {
-            if (typeof resource === 'string') {
-                const sep = resource.includes('?') ? '&' : '?';
-                resource = resource + sep + '_t=' + Date.now();
-            }
+        config.headers = {...config.headers, 'Cache-Control':'no-cache, no-store, must-revalidate', 'Pragma':'no-cache'};
+        if (sameOrigin && !['GET','HEAD','OPTIONS'].includes(method) && csrfToken) config.headers['X-CSRF-Token'] = csrfToken;
+        if (method === 'GET' && typeof resource === 'string') {
+            const sep = resource.includes('?') ? '&' : '?'; resource = resource + sep + '_t=' + Date.now();
         }
         const res = await originalFetch(resource, config);
-        if (res.status === 401 && typeof resource === 'string' && !resource.includes('/api/auth/')) {
-            showLoginScreen();
-        }
+        if (res.status === 401 && typeof resource === 'string' && !resource.includes('/api/auth/')) showLoginScreen();
         return res;
     };
 
@@ -1018,6 +1013,7 @@
 
         const authRes = await originalFetch('/api/auth/status', {headers:{'Cache-Control':'no-cache'}});
         const auth = await authRes.json();
+        csrfToken = auth.csrf_token || '';
         if (!auth.logged_in) {
             showLoginScreen();
             return;
@@ -1040,8 +1036,8 @@
             partner_name: document.getElementById('setupPartnerName').value.trim(),
             partner_pin: document.getElementById('setupPartnerPin').value.trim()
         };
-        if (!payload.store_name || !payload.partner_name || payload.partner_pin.length < 4) {
-            alert('⚠️ 請填完整；個人 PIN 至少 4 碼。'); return;
+        if (!payload.store_name || !payload.partner_name || payload.partner_pin.length < 6) {
+            alert('⚠️ 請填完整；個人 PIN 至少 6 碼。'); return;
         }
         btn.disabled = true; btn.innerText = '建立中...';
         const res = await originalFetch('/api/setup', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
@@ -1076,7 +1072,7 @@
 
     async function logoutPOS() {
         if (!confirm('確定登出目前 POS？')) return;
-        await originalFetch('/api/auth/logout', {method:'POST'});
+        await fetch('/api/auth/logout', {method:'POST'});
         window.location.reload();
     }
 
@@ -1121,8 +1117,20 @@
         openPartnerModal();
     }
 
+    async function ensureSensitiveAuth() {
+    const pin = prompt('🔐 此操作較敏感，請再次輸入目前使用者 PIN：', '');
+    if (!pin) return false;
+    try {
+        const res = await fetch('/api/auth/reauth', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password: pin})});
+        const data = await res.json();
+        if(!res.ok) { alert(data.message || '驗證失敗'); return false; }
+        return true;
+    } catch(e) { alert('安全驗證失敗，請檢查連線。'); return false; }
+}
+
     async function deletePartner(id) {
         if(!confirm('刪除此使用者？')) return;
+        if(!await ensureSensitiveAuth()) return;
         const res = await fetch(`/api/partners?id=${id}`, {method:'DELETE'}); const data = await res.json();
         if(!res.ok) alert(data.message || '刪除失敗');
         loadPeople();
@@ -1201,12 +1209,12 @@
         finally { btn.disabled = false; btn.innerHTML = original; }
     }
 
-    function downloadDatabaseBackup() {
-        const a = document.createElement('a');
-        a.href = '/api/system/backup/download';
-        a.download = '';
-        document.body.appendChild(a); a.click(); a.remove();
-    }
+    async function downloadDatabaseBackup() {
+    if(!await ensureSensitiveAuth()) return;
+    const a = document.createElement('a');
+    a.href = '/api/system/backup/download'; a.download = '';
+    document.body.appendChild(a); a.click(); a.remove();
+}
 
     async function saveSettings() {
         const payload = {

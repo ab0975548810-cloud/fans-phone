@@ -1,4 +1,4 @@
 {
-  "version": "1.5.2",
-  "release_notes": "新增設定頁「檢查更新」：可比對 GitHub 最新版本；更新仍由 GitHub → Zeabur 部署，營業資料保留在 /data/pos.db。"
+  "version": "1.5.3",
+  "release_notes": "安全更新：登入 PIN 防暴力破解、12 小時 Session、CSRF 防護、Secure Cookie、安全標頭、敏感操作二次驗證；新設或修改 PIN 改為至少 6 碼，既有 PIN 仍可登入。"
 }

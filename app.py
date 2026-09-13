@@ -9,6 +9,8 @@ import json
 import calendar
 import urllib.request
 import urllib.error
+import hmac
+from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -17,7 +19,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 TW_TZ = ZoneInfo("Asia/Taipei")
 DB_NAME = "pos.db"
-APP_VERSION = "1.5.2"
+APP_VERSION = "1.5.3"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/ab0975548810-cloud/fans-phone/main/version.json"
 
 
@@ -50,7 +52,9 @@ app.secret_key = load_or_create_secret_key()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "0") == "1",
+    SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "1") != "0",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+    SESSION_REFRESH_EACH_REQUEST=True,
 )
 
 
@@ -61,6 +65,18 @@ def add_header(response):
     response.headers["Expires"] = "-1"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
+        "img-src 'self' data: blob:; connect-src 'self'; "
+        "frame-ancestors 'self'; base-uri 'self'; form-action 'self'"
+    )
+    if request.is_secure or request.headers.get("X-Forwarded-Proto", "").lower() == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 
@@ -97,6 +113,105 @@ def set_setting(cursor, key, value):
 
 def setup_completed(cursor):
     return get_setting(cursor, "setup_completed", "0") == "1"
+
+
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_LOCK_SECONDS = 15 * 60
+LOGIN_RESET_SECONDS = 30 * 60
+
+
+def ensure_csrf_token():
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return token
+
+
+def _client_ip():
+    forwarded = str(request.headers.get("X-Forwarded-For", "")).split(",")[0].strip()
+    return forwarded or request.remote_addr or "unknown"
+
+
+def _login_keys(partner_name):
+    name = str(partner_name or "").strip().casefold() or "unknown"
+    return (f"account:{name}", f"ip:{_client_ip()}")
+
+
+def _login_lock_remaining(cursor, partner_name):
+    now = int(time.time())
+    remaining = 0
+    for key in _login_keys(partner_name):
+        row = cursor.execute("SELECT locked_until FROM login_security WHERE login_key=?", (key,)).fetchone()
+        if row:
+            remaining = max(remaining, int(row["locked_until"] or 0) - now)
+    return max(0, remaining)
+
+
+def _record_login_failure(cursor, partner_name):
+    now = int(time.time())
+    highest = 0
+    locked = False
+    for key in _login_keys(partner_name):
+        row = cursor.execute("SELECT fail_count, locked_until, updated_at FROM login_security WHERE login_key=?", (key,)).fetchone()
+        if row and int(row["locked_until"] or 0) > now:
+            highest = max(highest, int(row["fail_count"] or LOGIN_MAX_ATTEMPTS))
+            locked = True
+            continue
+        count = int(row["fail_count"] or 0) if row else 0
+        updated = int(row["updated_at"] or 0) if row else 0
+        if not updated or now - updated > LOGIN_RESET_SECONDS:
+            count = 0
+        count += 1
+        locked_until = now + LOGIN_LOCK_SECONDS if count >= LOGIN_MAX_ATTEMPTS else 0
+        cursor.execute(
+            "INSERT INTO login_security (login_key, fail_count, locked_until, updated_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(login_key) DO UPDATE SET fail_count=excluded.fail_count, locked_until=excluded.locked_until, updated_at=excluded.updated_at",
+            (key, count, locked_until, now),
+        )
+        highest = max(highest, count)
+        locked = locked or bool(locked_until)
+    return highest, locked
+
+
+def _clear_login_failures(cursor, partner_name):
+    for key in _login_keys(partner_name):
+        cursor.execute("DELETE FROM login_security WHERE login_key=?", (key,))
+
+
+def _recently_reauthed():
+    return int(session.get("reauth_until", 0) or 0) >= int(time.time())
+
+
+def require_recent_reauth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get("partner_id"):
+            return jsonify({"message": "⛔ 登入已失效，請重新登入"}), 401
+        if not _recently_reauthed():
+            return jsonify({"message": "此操作需要再次驗證目前使用者 PIN", "code": "reauth_required"}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+@app.before_request
+def enforce_request_security():
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return None
+    origin = request.headers.get("Origin")
+    if origin:
+        try:
+            origin_host = urlparse(origin).netloc
+        except Exception:
+            origin_host = ""
+        if origin_host and origin_host != request.host:
+            return jsonify({"message": "⛔ 跨站請求已阻擋"}), 403
+    if session.get("partner_id") and request.path not in {"/api/auth/login", "/api/setup"}:
+        expected = str(session.get("csrf_token") or "")
+        supplied = str(request.headers.get("X-CSRF-Token") or "")
+        if not expected or not supplied or not hmac.compare_digest(expected, supplied):
+            return jsonify({"message": "⛔ 安全驗證失敗，請重新整理後再試", "code": "csrf_failed"}), 403
+    return None
 
 
 def require_auth(f):
@@ -291,6 +406,14 @@ def init_db():
                 partner_name TEXT NOT NULL,
                 action TEXT NOT NULL,
                 detail TEXT DEFAULT ''
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS login_security (
+                login_key TEXT PRIMARY KEY,
+                fail_count INTEGER NOT NULL DEFAULT 0,
+                locked_until INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0
             )
         """)
         cursor.execute("""
@@ -623,8 +746,8 @@ def setup_store():
     store_name = str(data.get("store_name", "")).strip()
     partner_name = str(data.get("partner_name", "")).strip()
     partner_pin = str(data.get("partner_pin", "")).strip()
-    if not store_name or not partner_name or len(partner_pin) < 4:
-        return jsonify({"message": "店名與第一位使用者必填，個人 PIN 至少 4 碼"}), 400
+    if not store_name or not partner_name or len(partner_pin) < 6:
+        return jsonify({"message": "店名與第一位使用者必填，個人 PIN 至少 6 碼"}), 400
 
     conn = get_db_connection()
     try:
@@ -654,10 +777,12 @@ def setup_store():
 
 @app.route("/api/auth/status", methods=["GET"])
 def auth_status():
-    return jsonify({
-        "logged_in": bool(session.get("partner_id")),
-        "partner": session.get("partner_name", ""),
-    })
+    logged_in = bool(session.get("partner_id"))
+    csrf_token = ""
+    if logged_in:
+        session.permanent = True
+        csrf_token = ensure_csrf_token()
+    return jsonify({"logged_in": logged_in, "partner": session.get("partner_name", ""), "csrf_token": csrf_token})
 
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -665,26 +790,64 @@ def auth_login():
     data = request.get_json() or {}
     partner_name = str(data.get("partner_name", "")).strip()
     pwd = str(data.get("password", "")).strip()
+    if not partner_name or not pwd:
+        return jsonify({"message": "請選擇使用者並輸入 PIN"}), 400
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         if not setup_completed(cursor):
             return jsonify({"message": "請先完成首次設定"}), 409
-        user = cursor.execute(
-            "SELECT id, name, password_hash FROM partners WHERE name=?",
-            (partner_name,),
-        ).fetchone()
+        remaining = _login_lock_remaining(cursor, partner_name)
+        if remaining > 0:
+            minutes = max(1, (remaining + 59) // 60)
+            return jsonify({"message": f"登入嘗試過多，請約 {minutes} 分鐘後再試", "retry_after": remaining}), 429
+        user = cursor.execute("SELECT id, name, password_hash FROM partners WHERE name=?", (partner_name,)).fetchone()
         if user and user["password_hash"] and check_password_hash(user["password_hash"], pwd):
+            _clear_login_failures(cursor, partner_name)
             session.clear()
             session["partner_id"] = user["id"]
             session["partner_name"] = user["name"]
-            try:
-                log_action(cursor, "登入", "登入 POS")
-                conn.commit()
-            except Exception:
-                conn.rollback()
-            return jsonify({"status": "success", "partner": user["name"]})
-        return jsonify({"status": "error", "message": "PIN 錯誤"}), 401
+            session.permanent = True
+            csrf_token = ensure_csrf_token()
+            log_action(cursor, "登入", "登入 POS")
+            conn.commit()
+            return jsonify({"status": "success", "partner": user["name"], "csrf_token": csrf_token})
+        fail_count, locked = _record_login_failure(cursor, partner_name)
+        attempts_left = max(0, LOGIN_MAX_ATTEMPTS - fail_count)
+        cursor.execute("INSERT INTO audit_logs (created_at, partner_name, action, detail) VALUES (?, ?, ?, ?)", (now_tw().strftime("%Y-%m-%d %H:%M:%S"), partner_name or "未知", "登入失敗", "已觸發暫時鎖定" if locked else f"PIN 錯誤；剩餘嘗試 {attempts_left} 次"))
+        conn.commit()
+        if locked:
+            return jsonify({"status": "error", "message": "PIN 連續錯誤過多，已暫停登入 15 分鐘", "retry_after": LOGIN_LOCK_SECONDS}), 429
+        return jsonify({"status": "error", "message": f"PIN 錯誤，還可嘗試 {attempts_left} 次"}), 401
+    finally:
+        conn.close()
+
+
+@app.route("/api/auth/reauth", methods=["POST"])
+@require_auth
+def auth_reauth():
+    data = request.get_json() or {}
+    pin = str(data.get("password", "")).strip()
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        partner_name = str(session.get("partner_name") or "")
+        remaining = _login_lock_remaining(cursor, partner_name)
+        if remaining > 0:
+            return jsonify({"message": "目前帳號暫時鎖定，請稍後再試", "retry_after": remaining}), 429
+        user = cursor.execute("SELECT password_hash FROM partners WHERE id=?", (session.get("partner_id"),)).fetchone()
+        if user and pin and check_password_hash(user["password_hash"], pin):
+            _clear_login_failures(cursor, partner_name)
+            session["reauth_until"] = int(time.time()) + 300
+            log_action(cursor, "安全驗證", "敏感操作二次驗證成功")
+            conn.commit()
+            return jsonify({"status": "success", "valid_for": 300})
+        fail_count, locked = _record_login_failure(cursor, partner_name)
+        log_action(cursor, "安全驗證失敗", "二次驗證 PIN 錯誤")
+        conn.commit()
+        if locked:
+            return jsonify({"message": "PIN 連續錯誤過多，已暫停驗證 15 分鐘"}), 429
+        return jsonify({"message": f"PIN 錯誤，還可嘗試 {max(0, LOGIN_MAX_ATTEMPTS-fail_count)} 次"}), 401
     finally:
         conn.close()
 
@@ -802,6 +965,7 @@ def system_backup_api():
 
 @app.route("/api/system/backup/download", methods=["GET"])
 @require_auth
+@require_recent_reauth
 def system_backup_download_api():
     path = _make_manual_backup()
     if not path:
@@ -864,8 +1028,8 @@ def handle_partners():
             try:
                 if pid:
                     if pin:
-                        if len(pin) < 4:
-                            return jsonify({"message": "PIN 至少 4 碼"}), 400
+                        if len(pin) < 6:
+                            return jsonify({"message": "PIN 至少 6 碼"}), 400
                         cursor.execute(
                             "UPDATE partners SET name=?, password_hash=? WHERE id=?",
                             (name, generate_password_hash(pin), pid),
@@ -873,8 +1037,8 @@ def handle_partners():
                     else:
                         cursor.execute("UPDATE partners SET name=? WHERE id=?", (name, pid))
                 else:
-                    if len(pin) < 4:
-                        return jsonify({"message": "新增使用者時 PIN 至少 4 碼"}), 400
+                    if len(pin) < 6:
+                        return jsonify({"message": "新增使用者時 PIN 至少 6 碼"}), 400
                     cursor.execute(
                         "INSERT INTO partners (name, password_hash) VALUES (?, ?)",
                         (name, generate_password_hash(pin)),
@@ -885,6 +1049,8 @@ def handle_partners():
             except sqlite3.IntegrityError:
                 return jsonify({"message": "使用者名稱已存在"}), 400
 
+        if not _recently_reauthed():
+            return jsonify({"message": "刪除使用者前需要再次輸入目前使用者 PIN", "code": "reauth_required"}), 403
         pid = request.args.get("id")
         if cursor.execute("SELECT COUNT(*) FROM partners").fetchone()[0] <= 1:
             return jsonify({"message": "至少保留一位使用者"}), 400
