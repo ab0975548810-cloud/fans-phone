@@ -1,0 +1,215 @@
+name: Apply POS V1.5.2 update checker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-update-check.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch V1.5.2
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          app = Path('app.py')
+          s = app.read_text(encoding='utf-8')
+          if 'APP_VERSION = "1.5.2"' not in s:
+              s = s.replace('import calendar\n', 'import calendar\nimport urllib.request\nimport urllib.error\n')
+              s = s.replace(
+                  'APP_VERSION = "1.5.1"\n',
+                  'APP_VERSION = "1.5.2"\nUPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/ab0975548810-cloud/fans-phone/main/version.json"\n'
+              )
+
+          if 'def _check_update_payload():' not in s:
+              marker = '''@app.route("/api/system/status", methods=["GET"])
+          @require_auth
+          def system_status_api():
+              return jsonify(_backup_status_payload())
+
+
+          '''
+              replacement = '''def _version_tuple(version):
+              parts = []
+              for part in str(version or "0").strip().lstrip("vV").split("."):
+                  digits = "".join(ch for ch in part if ch.isdigit())
+                  parts.append(int(digits or 0))
+              while len(parts) < 3:
+                  parts.append(0)
+              return tuple(parts[:3])
+
+
+          def _check_update_payload():
+              req = urllib.request.Request(
+                  UPDATE_MANIFEST_URL,
+                  headers={"User-Agent": f"fans-phone-pos/{APP_VERSION}", "Cache-Control": "no-cache"},
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=5) as resp:
+                      manifest = json.loads(resp.read().decode("utf-8"))
+                  latest = str(manifest.get("version") or "").strip().lstrip("vV")
+                  if not latest:
+                      raise ValueError("版本資訊缺少 version")
+                  return {
+                      "current_version": APP_VERSION,
+                      "latest_version": latest,
+                      "update_available": _version_tuple(latest) > _version_tuple(APP_VERSION),
+                      "release_notes": str(manifest.get("release_notes") or "").strip(),
+                      "checked_at": now_tw().strftime("%Y-%m-%d %H:%M:%S"),
+                  }
+              except Exception as e:
+                  return {
+                      "current_version": APP_VERSION,
+                      "latest_version": None,
+                      "update_available": False,
+                      "release_notes": "",
+                      "checked_at": now_tw().strftime("%Y-%m-%d %H:%M:%S"),
+                      "error": f"無法取得最新版本資訊：{e}",
+                  }
+
+
+          @app.route("/api/system/status", methods=["GET"])
+          @require_auth
+          def system_status_api():
+              return jsonify(_backup_status_payload())
+
+
+          @app.route("/api/system/update_check", methods=["GET"])
+          @require_auth
+          def system_update_check_api():
+              payload = _check_update_payload()
+              if payload.get("error"):
+                  return jsonify(payload), 503
+              return jsonify(payload)
+
+
+          '''
+              if marker not in s:
+                  raise SystemExit('app.py system status marker not found')
+              s = s.replace(marker, replacement, 1)
+          app.write_text(s, encoding='utf-8')
+
+          html = Path('templates/index.html')
+          h = html.read_text(encoding='utf-8')
+          if 'id="systemUpdateText"' not in h:
+              marker = '''                <div class="d-grid gap-2 d-sm-flex">
+                      <button type="button" class="btn btn-outline-primary fw-bold flex-fill" onclick="createManualBackup(this)">🛡️ 立即備份</button>
+                      <button type="button" class="btn btn-outline-success fw-bold flex-fill" onclick="downloadDatabaseBackup()">⬇️ 下載備份</button>
+                  </div>
+                  <div class="small text-secondary mt-2">更新新版時只更新程式，<strong>/data/pos.db 不會跟著重建</strong>。建議每次更新前先按「立即備份」，並定期下載一份到電腦或雲端。</div>
+          '''
+              replacement = '''                <div class="border rounded p-3 bg-white mb-2">
+                      <div class="d-flex justify-content-between align-items-center gap-2">
+                          <span class="text-secondary">更新狀態</span>
+                          <span class="fw-bold text-secondary text-end" id="systemUpdateText">尚未檢查</span>
+                      </div>
+                      <div class="small text-secondary mt-2 d-none" id="systemUpdateNotes"></div>
+                  </div>
+                  <div class="d-grid gap-2 mb-2">
+                      <button type="button" class="btn btn-outline-dark fw-bold" onclick="checkForUpdates(this)">🔄 檢查更新</button>
+                  </div>
+                  <div class="d-grid gap-2 d-sm-flex">
+                      <button type="button" class="btn btn-outline-primary fw-bold flex-fill" onclick="createManualBackup(this)">🛡️ 立即備份</button>
+                      <button type="button" class="btn btn-outline-success fw-bold flex-fill" onclick="downloadDatabaseBackup()">⬇️ 下載備份</button>
+                  </div>
+                  <div class="small text-secondary mt-2">「檢查更新」只確認是否有新版，不會直接安裝。真正更新仍由 GitHub → Zeabur 重新部署；<strong>/data/pos.db 不會跟著重建</strong>。建議每次更新前先按「立即備份」。</div>
+          '''
+              if marker not in h:
+                  raise SystemExit('templates/index.html settings marker not found')
+              h = h.replace(marker, replacement, 1)
+
+          if 'async function checkForUpdates(btn)' not in h:
+              marker = '    async function createManualBackup(btn) {\n'
+              replacement = '''    async function checkForUpdates(btn) {
+              const original = btn.innerHTML;
+              const textEl = document.getElementById('systemUpdateText');
+              const notesEl = document.getElementById('systemUpdateNotes');
+              btn.disabled = true; btn.innerHTML = '⏳ 檢查中...';
+              textEl.textContent = '檢查中...';
+              textEl.className = 'fw-bold text-secondary text-end';
+              notesEl.classList.add('d-none');
+              notesEl.textContent = '';
+              try {
+                  const res = await fetch('/api/system/update_check', {headers:{'Cache-Control':'no-cache'}});
+                  const data = await res.json();
+                  if(!res.ok) throw new Error(data.error || data.message || '檢查失敗');
+                  if(data.update_available) {
+                      textEl.textContent = `🆕 有新版 V${data.latest_version}`;
+                      textEl.className = 'fw-bold text-primary text-end';
+                      if(data.release_notes) { notesEl.textContent = data.release_notes; notesEl.classList.remove('d-none'); }
+                      alert(`🆕 發現新版 V${data.latest_version}！\\n目前版本：V${data.current_version}\\n\\n更新會由 GitHub → Zeabur 部署，請先按「立即備份」。`);
+                  } else {
+                      textEl.textContent = `✅ 已是最新版 V${data.current_version}`;
+                      textEl.className = 'fw-bold text-success text-end';
+                      if(data.release_notes) { notesEl.textContent = data.release_notes; notesEl.classList.remove('d-none'); }
+                  }
+              } catch(e) {
+                  textEl.textContent = '⚠️ 無法檢查更新';
+                  textEl.className = 'fw-bold text-danger text-end';
+                  notesEl.textContent = e.message || '請稍後再試';
+                  notesEl.classList.remove('d-none');
+              } finally {
+                  btn.disabled = false; btn.innerHTML = original;
+              }
+          }
+
+              async function createManualBackup(btn) {
+          '''
+              if marker not in h:
+                  raise SystemExit('templates/index.html JS marker not found')
+              h = h.replace(marker, replacement, 1)
+          html.write_text(h, encoding='utf-8')
+
+          Path('version.json').write_text(json.dumps({
+              'version': '1.5.2',
+              'release_notes': '新增設定頁「檢查更新」：可比對 GitHub 最新版本；更新仍由 GitHub → Zeabur 部署，營業資料保留在 /data/pos.db。'
+          }, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          readme = Path('README.md')
+          if readme.exists():
+              r = readme.read_text(encoding='utf-8').replace('V1.5.1', 'V1.5.2')
+              if '## 檢查更新' not in r:
+                  r += '\n## 檢查更新\n\nV1.5.2 起，POS 設定頁可按「檢查更新」比對 `version.json`。此功能只檢查版本，不會在 POS 內直接安裝；正式更新仍由 GitHub `main` → Zeabur 部署。\n'
+              readme.write_text(r, encoding='utf-8')
+          PY
+
+      - name: Validate Python and JavaScript
+        shell: bash
+        run: |
+          python -m py_compile app.py
+          python - <<'PY'
+          from pathlib import Path
+          s = Path('templates/index.html').read_text(encoding='utf-8')
+          start = s.rfind('<script>')
+          end = s.rfind('</script>')
+          if start < 0 or end < 0 or end <= start:
+              raise SystemExit('script block not found')
+          Path('/tmp/pos.js').write_text(s[start+8:end], encoding='utf-8')
+          PY
+          node --check /tmp/pos.js
+
+      - name: Commit V1.5.2
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py templates/index.html version.json README.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "feat: add POS update checker V1.5.2"
+          git push origin HEAD:main
