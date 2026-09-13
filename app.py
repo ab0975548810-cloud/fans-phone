@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, request, session
+from flask import Flask, render_template, jsonify, request, session, send_file
 import sqlite3
 import os
 import shutil
@@ -7,7 +7,7 @@ import time
 import secrets
 import json
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from zoneinfo import ZoneInfo
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -15,6 +15,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 TW_TZ = ZoneInfo("Asia/Taipei")
 DB_NAME = "pos.db"
+APP_VERSION = "1.5.1"
 
 
 def get_db_dir():
@@ -302,6 +303,7 @@ def init_db():
                 expected_cash REAL DEFAULT NULL,
                 cash_difference REAL DEFAULT NULL,
                 difference_note TEXT DEFAULT '',
+                closing_note TEXT DEFAULT '',
                 cash_sales REAL NOT NULL DEFAULT 0,
                 cash_expenses REAL NOT NULL DEFAULT 0,
                 revenue REAL NOT NULL DEFAULT 0,
@@ -321,6 +323,27 @@ def init_db():
                 target_amount REAL NOT NULL DEFAULT 0,
                 updated_at TEXT DEFAULT NULL,
                 updated_by TEXT DEFAULT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stocktake_sessions (
+                batch_no TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                partner_name TEXT NOT NULL,
+                note TEXT DEFAULT ''
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stocktake_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                batch_no TEXT NOT NULL,
+                product_id INTEGER NOT NULL,
+                variant_id INTEGER DEFAULT NULL,
+                product_name TEXT NOT NULL,
+                expected_stock INTEGER NOT NULL DEFAULT 0,
+                actual_stock INTEGER NOT NULL DEFAULT 0,
+                difference INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(batch_no) REFERENCES stocktake_sessions(batch_no) ON DELETE CASCADE
             )
         """)
         cursor.execute("""
@@ -377,6 +400,10 @@ def init_db():
             cursor.execute("ALTER TABLE orders ADD COLUMN edited_by TEXT DEFAULT NULL")
         if "edit_count" not in order_cols:
             cursor.execute("ALTER TABLE orders ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0")
+
+        business_cols = {r[1] for r in cursor.execute("PRAGMA table_info(business_days)").fetchall()}
+        if "closing_note" not in business_cols:
+            cursor.execute("ALTER TABLE business_days ADD COLUMN closing_note TEXT DEFAULT ''")
 
         restock_cols = {r[1] for r in cursor.execute("PRAGMA table_info(restock_logs)").fetchall()}
         for col, ddl in {
@@ -453,18 +480,120 @@ def init_db():
 init_db()
 
 
-def start_auto_backup():
+def _backup_database_to(dst_path):
+    """使用 SQLite Online Backup API 產生一致性備份，避免直接複製寫入中的 DB。"""
+    src_path = os.path.join(get_db_dir(), DB_NAME)
+    if not os.path.exists(src_path):
+        return False
+    src_conn = sqlite3.connect(src_path, timeout=15)
+    dst_conn = sqlite3.connect(dst_path, timeout=15)
+    try:
+        src_conn.backup(dst_conn)
+        dst_conn.commit()
+        return True
+    finally:
+        dst_conn.close()
+        src_conn.close()
+
+
+def _cleanup_old_backups(backup_dir):
+    try:
+        hourly = sorted(
+            [os.path.join(backup_dir, n) for n in os.listdir(backup_dir) if n.startswith("pos_") and n.endswith(".db")],
+            key=os.path.getmtime, reverse=True,
+        )
+        # 保留最近 168 份小時備份（約 7 天）。
+        for old in hourly[168:]:
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+        daily = sorted(
+            [os.path.join(backup_dir, n) for n in os.listdir(backup_dir) if n.startswith("daily_") and n.endswith(".db")],
+            key=os.path.getmtime, reverse=True,
+        )
+        # 每日備份保留最近 90 天。
+        for old in daily[90:]:
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+        manual = sorted(
+            [os.path.join(backup_dir, n) for n in os.listdir(backup_dir) if n.startswith("manual_") and n.endswith(".db")],
+            key=os.path.getmtime, reverse=True,
+        )
+        # 手動備份保留最近 20 份，避免長期堆積。
+        for old in manual[20:]:
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+    except Exception as e:
+        print("清理備份失敗:", e)
+
+
+def _make_backup():
     base_dir = get_db_dir()
     backup_dir = os.path.join(base_dir, "POS_Backup")
     os.makedirs(backup_dir, exist_ok=True)
+    src = os.path.join(base_dir, DB_NAME)
+    if not os.path.exists(src):
+        return None
+    now = now_tw()
+    hourly = os.path.join(backup_dir, f"pos_{now.strftime('%Y-%m-%d_%H%M')}.db")
+    _backup_database_to(hourly)
+    # daily_YYYY-MM-DD.db 每小時更新一次，所以當天最後狀態會留在每日備份。
+    daily = os.path.join(backup_dir, f"daily_{now.strftime('%Y-%m-%d')}.db")
+    _backup_database_to(daily)
+    _cleanup_old_backups(backup_dir)
+    return hourly
+
+
+def _make_manual_backup():
+    backup_dir = os.path.join(get_db_dir(), "POS_Backup")
+    os.makedirs(backup_dir, exist_ok=True)
+    now = now_tw()
+    path = os.path.join(backup_dir, f"manual_{now.strftime('%Y-%m-%d_%H%M%S')}.db")
+    if not _backup_database_to(path):
+        return None
+    _cleanup_old_backups(backup_dir)
+    return path
+
+
+def _backup_status_payload():
+    base_dir = get_db_dir()
+    backup_dir = os.path.join(base_dir, "POS_Backup")
+    db_path = os.path.join(base_dir, DB_NAME)
+    os.makedirs(backup_dir, exist_ok=True)
+    names = os.listdir(backup_dir) if os.path.isdir(backup_dir) else []
+    hourly = [os.path.join(backup_dir, n) for n in names if n.startswith("pos_") and n.endswith(".db")]
+    daily = [os.path.join(backup_dir, n) for n in names if n.startswith("daily_") and n.endswith(".db")]
+    manual = [os.path.join(backup_dir, n) for n in names if n.startswith("manual_") and n.endswith(".db")]
+    all_backups = hourly + daily + manual
+    latest = max(all_backups, key=os.path.getmtime) if all_backups else None
+    return {
+        "version": APP_VERSION,
+        "storage": base_dir,
+        "persistent_storage": os.path.abspath(base_dir) == "/data",
+        "db_size": os.path.getsize(db_path) if os.path.exists(db_path) else 0,
+        "backup_dir": backup_dir,
+        "hourly_count": len(hourly),
+        "daily_count": len(daily),
+        "manual_count": len(manual),
+        "latest_backup": datetime.fromtimestamp(os.path.getmtime(latest), TW_TZ).strftime("%Y-%m-%d %H:%M:%S") if latest else None,
+    }
+
+
+def start_auto_backup():
+    # 啟動先留一份，再每小時備份。
+    try:
+        _make_backup()
+    except Exception as e:
+        print("備份失敗:", e)
     while True:
         time.sleep(3600)
         try:
-            src = os.path.join(base_dir, DB_NAME)
-            if os.path.exists(src):
-                today_str = now_tw().strftime("%Y-%m-%d")
-                dst = os.path.join(backup_dir, f"pos_{today_str}.db")
-                shutil.copy2(src, dst)
+            _make_backup()
         except Exception as e:
             print("備份失敗:", e)
 
@@ -594,6 +723,40 @@ def settings_api():
         return jsonify({"status": "success"})
     finally:
         conn.close()
+
+
+@app.route("/api/system/status", methods=["GET"])
+@require_auth
+def system_status_api():
+    return jsonify(_backup_status_payload())
+
+
+@app.route("/api/system/backup", methods=["POST"])
+@require_auth
+def system_backup_api():
+    path = _make_manual_backup()
+    if not path:
+        return jsonify({"message": "找不到資料庫，無法備份"}), 404
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        log_action(cursor, "手動備份", os.path.basename(path))
+        conn.commit()
+    finally:
+        conn.close()
+    payload = _backup_status_payload()
+    payload.update({"status": "success", "file": os.path.basename(path)})
+    return jsonify(payload)
+
+
+@app.route("/api/system/backup/download", methods=["GET"])
+@require_auth
+def system_backup_download_api():
+    path = _make_manual_backup()
+    if not path:
+        return jsonify({"message": "找不到資料庫，無法下載"}), 404
+    download_name = f"POS_backup_{now_tw().strftime('%Y-%m-%d_%H%M%S')}.db"
+    return send_file(path, as_attachment=True, download_name=download_name, mimetype="application/octet-stream")
 
 
 @app.route("/api/payment_methods", methods=["GET", "POST", "DELETE"])
@@ -1135,6 +1298,160 @@ def edit_restock_batch():
         conn.close()
 
 
+@app.route("/api/low_stock", methods=["GET"])
+@require_auth
+def low_stock_api():
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        products = cursor.execute("SELECT id, name, stock, threshold, track_stock FROM products WHERE track_stock=1 ORDER BY id").fetchall()
+        result = []
+        for p in products:
+            variants = cursor.execute(
+                "SELECT id, name, stock, threshold FROM product_variants WHERE product_id=? ORDER BY id",
+                (p["id"],),
+            ).fetchall()
+            if variants:
+                for v in variants:
+                    if int(v["stock"] or 0) <= int(v["threshold"] or 0):
+                        stock = int(v["stock"] or 0)
+                        threshold = int(v["threshold"] or 0)
+                        target = max(threshold * 2, threshold + 1, 1)
+                        result.append({
+                            "product_id": p["id"], "variant_id": v["id"],
+                            "product_name": p["name"], "variant_name": v["name"],
+                            "stock": stock, "threshold": threshold,
+                            "suggested_restock": max(1, target - stock),
+                        })
+            elif int(p["stock"] or 0) <= int(p["threshold"] or 0):
+                stock = int(p["stock"] or 0)
+                threshold = int(p["threshold"] or 0)
+                target = max(threshold * 2, threshold + 1, 1)
+                result.append({
+                    "product_id": p["id"], "variant_id": None,
+                    "product_name": p["name"], "variant_name": "",
+                    "stock": stock, "threshold": threshold,
+                    "suggested_restock": max(1, target - stock),
+                })
+        return jsonify(result)
+    finally:
+        conn.close()
+
+
+@app.route("/api/stocktake", methods=["GET", "POST"])
+@require_auth
+def stocktake_api():
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        if request.method == "GET":
+            result = []
+            products = cursor.execute("SELECT id, name, stock, threshold FROM products WHERE track_stock=1 ORDER BY id").fetchall()
+            for p in products:
+                variants = cursor.execute(
+                    "SELECT id, name, stock, threshold FROM product_variants WHERE product_id=? ORDER BY id",
+                    (p["id"],),
+                ).fetchall()
+                if variants:
+                    for v in variants:
+                        result.append({
+                            "product_id": p["id"], "variant_id": v["id"],
+                            "product_name": p["name"], "variant_name": v["name"],
+                            "stock": int(v["stock"] or 0), "threshold": int(v["threshold"] or 0),
+                        })
+                else:
+                    result.append({
+                        "product_id": p["id"], "variant_id": None,
+                        "product_name": p["name"], "variant_name": "",
+                        "stock": int(p["stock"] or 0), "threshold": int(p["threshold"] or 0),
+                    })
+            return jsonify(result)
+
+        data = request.get_json() or {}
+        items = data.get("items") or []
+        note = str(data.get("note") or "").strip()
+        if not items:
+            return jsonify({"message": "沒有盤點資料"}), 400
+        conn.execute("BEGIN IMMEDIATE")
+        batch_no = f"ST-{now_tw().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(2).upper()}"
+        now_str = now_tw().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute(
+            "INSERT INTO stocktake_sessions (batch_no, created_at, partner_name, note) VALUES (?, ?, ?, ?)",
+            (batch_no, now_str, current_actor(), note),
+        )
+        touched_parents = set()
+        changed = 0
+        for raw in items:
+            pid = int(raw.get("product_id") or 0)
+            vid_raw = raw.get("variant_id")
+            vid = int(vid_raw) if vid_raw not in (None, "", "null") else None
+            actual = int(raw.get("actual_stock"))
+            if actual < 0:
+                raise ValueError("盤點庫存不可小於 0")
+            p = cursor.execute("SELECT name, track_stock, stock FROM products WHERE id=?", (pid,)).fetchone()
+            if not p or not p["track_stock"]:
+                raise ValueError("找不到可盤點商品")
+            if vid:
+                v = cursor.execute("SELECT name, stock FROM product_variants WHERE id=? AND product_id=?", (vid, pid)).fetchone()
+                if not v:
+                    raise ValueError(f"【{p['name']}】找不到指定型號")
+                expected = int(v["stock"] or 0)
+                full_name = f"{p['name']} ({v['name']})"
+                cursor.execute("UPDATE product_variants SET stock=? WHERE id=?", (actual, vid))
+                touched_parents.add(pid)
+            else:
+                variant_count = cursor.execute("SELECT COUNT(*) AS c FROM product_variants WHERE product_id=?", (pid,)).fetchone()["c"]
+                if variant_count:
+                    raise ValueError(f"【{p['name']}】有型號明細，請盤點型號庫存")
+                expected = int(p["stock"] or 0)
+                full_name = p["name"]
+                cursor.execute("UPDATE products SET stock=? WHERE id=?", (actual, pid))
+            diff = actual - expected
+            if diff:
+                changed += 1
+            cursor.execute(
+                "INSERT INTO stocktake_items (batch_no, product_id, variant_id, product_name, expected_stock, actual_stock, difference) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (batch_no, pid, vid, full_name, expected, actual, diff),
+            )
+        for pid in touched_parents:
+            recalc_product_stock(cursor, pid)
+        log_action(cursor, "庫存盤點", f"{batch_no}；{len(items)} 項；差異 {changed} 項" + (f"；{note}" if note else ""))
+        conn.commit()
+        return jsonify({"status": "success", "batch_no": batch_no, "changed_count": changed})
+    except (ValueError, TypeError) as e:
+        if conn.in_transaction:
+            conn.rollback()
+        return jsonify({"message": str(e)}), 400
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@app.route("/api/stocktake/logs", methods=["GET"])
+@require_auth
+def stocktake_logs_api():
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        rows = cursor.execute(
+            "SELECT batch_no, created_at, partner_name, note FROM stocktake_sessions ORDER BY created_at DESC LIMIT 50"
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["items"] = [dict(x) for x in cursor.execute(
+                "SELECT product_name, expected_stock, actual_stock, difference FROM stocktake_items WHERE batch_no=? ORDER BY id",
+                (r["batch_no"],),
+            ).fetchall()]
+            result.append(d)
+        return jsonify(result)
+    finally:
+        conn.close()
+
+
 @app.route("/api/business_day", methods=["GET"])
 @require_auth
 def business_day_status():
@@ -1226,6 +1543,7 @@ def business_day_close():
     data = request.get_json() or {}
     date_str = str(data.get("date") or today_tw()).strip()
     note = str(data.get("difference_note") or "").strip()
+    closing_note = str(data.get("closing_note") or "").strip()
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
         counted_cash = max(0.0, float(data.get("counted_cash", 0) or 0))
@@ -1250,11 +1568,11 @@ def business_day_close():
         now_str = now_tw().strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute("""
             UPDATE business_days SET
-                status='closed', closed_at=?, closed_by=?, counted_cash=?, expected_cash=?, cash_difference=?, difference_note=?,
+                status='closed', closed_at=?, closed_by=?, counted_cash=?, expected_cash=?, cash_difference=?, difference_note=?, closing_note=?,
                 cash_sales=?, cash_expenses=?, revenue=?, cost=?, expenses=?, net_profit=?, payment_summary=?
             WHERE date=?
         """, (
-            now_str, current_actor(), counted_cash, summary["expected_cash"], difference, note,
+            now_str, current_actor(), counted_cash, summary["expected_cash"], difference, note, closing_note,
             summary["cash_sales"], summary["cash_expenses"], summary["revenue"], summary["cost"],
             summary["expenses"], summary["net_profit"], json.dumps(summary["payments"], ensure_ascii=False), date_str,
         ))

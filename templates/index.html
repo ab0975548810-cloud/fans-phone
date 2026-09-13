@@ -185,6 +185,17 @@
             #yearlyMonthlyTable tbody td::before { content:attr(data-label); color:#64748b; font-weight:700; flex-shrink:0; }
         }
 
+        /* ===== V1.5 庫存盤點 / 待補貨 ===== */
+        .inventory-tool-card { border:1px solid #e2e8f0; border-radius:14px; background:#f8fafc; }
+        .low-stock-row, .stocktake-row { border:1px solid #e2e8f0; border-radius:12px; padding:10px; background:#fff; }
+        .stocktake-diff-positive { color:#198754; font-weight:800; }
+        .stocktake-diff-negative { color:#dc3545; font-weight:800; }
+        .stocktake-diff-zero { color:#64748b; font-weight:700; }
+        @media (max-width:767.98px) {
+            .inventory-tool-actions { width:100%; display:grid !important; grid-template-columns:1fr 1fr; }
+            .inventory-tool-actions .btn { width:100%; }
+        }
+
     </style>
 </head>
 <body>
@@ -321,8 +332,12 @@
         <div class="tab-pane fade" id="inventory" role="tabpanel">
             <div class="bg-white p-3 rounded border">
                 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-                    <h5 class="fw-bold text-dark m-0">📦 庫存與價格管理</h5>
-                    <button class="btn btn-pink fw-bold shadow-sm" onclick="openProductEditModal(null)">＋ 新增商品</button>
+                    <div><h5 class="fw-bold text-dark m-0">📦 庫存與價格管理</h5><div class="small text-secondary">低庫存補貨與實際盤點會保留操作紀錄</div></div>
+                    <div class="d-flex gap-2 flex-wrap inventory-tool-actions">
+                        <button class="btn btn-outline-danger fw-bold shadow-sm" onclick="openLowStockModal()">⚠️ 待補貨 <span id="lowStockCountBadge" class="badge bg-danger ms-1">0</span></button>
+                        <button class="btn btn-outline-success fw-bold shadow-sm" onclick="openStocktakeModal()">🧮 庫存盤點</button>
+                        <button class="btn btn-pink fw-bold shadow-sm" onclick="openProductEditModal(null)">＋ 新增商品</button>
+                    </div>
                 </div>
                 <div class="table-responsive">
                     <table class="table table-hover align-middle table-rwd" style="min-width: 100%;">
@@ -422,6 +437,10 @@
                         <div class="col"><div class="shift-kpi"><div class="label">💸 今日支出</div><div class="value" style="color:#6f42c1" id="shiftExpenses">$0</div></div></div>
                         <div class="col"><div class="shift-kpi"><div class="label">🏆 今日淨利</div><div class="value text-success" id="shiftProfit">$0</div></div></div>
                     </div>
+                    <div class="row row-cols-2 g-2 mb-3">
+                        <div class="col"><div class="shift-kpi"><div class="label">🧾 今日單數</div><div class="value" id="shiftOrdersCount">0 單</div></div></div>
+                        <div class="col"><div class="shift-kpi"><div class="label">👥 今日值班</div><div class="value fs-6" id="shiftPartners">無資料</div></div></div>
+                    </div>
 
                     <div class="row g-3 mb-3">
                         <div class="col-lg-6"><div class="bg-white border rounded-4 shadow-sm p-3 h-100"><h6 class="fw-bold mb-3">💳 付款核對</h6><div id="shiftPaymentList"></div></div></div>
@@ -439,6 +458,7 @@
                             <div class="col-12 col-md-6"><label class="form-label fw-bold">🧮 實際盤點現金</label><input type="number" min="0" id="countedCashInput" class="form-control form-control-lg fw-bold" oninput="updateCashDifference()" placeholder="數完錢後輸入"></div>
                             <div class="col-12 col-md-6"><label class="form-label fw-bold">現金差額</label><div id="cashDifferenceDisplay" class="form-control form-control-lg fw-bold bg-light">$0</div></div>
                             <div class="col-12"><label class="form-label fw-bold">📝 差異原因 <span class="small text-secondary">（有差額時必填）</span></label><input type="text" id="cashDifferenceNote" class="form-control" placeholder="例如：找零誤差、臨時墊付..."></div>
+                            <div class="col-12"><label class="form-label fw-bold">📌 關帳備註 <span class="small text-secondary">（選填）</span></label><input type="text" id="closingNoteInput" class="form-control" placeholder="例如：今天活動、人潮狀況、明日待辦..."></div>
                             <div class="col-12"><button class="btn btn-dark btn-lg w-100 fw-bold py-3" onclick="closeBusinessDay()">🔒 確認今日關帳</button></div>
                         </div>
                     </div>
@@ -450,7 +470,8 @@
                             <div class="col"><div class="shift-kpi"><div class="label">系統應有</div><div class="value" id="shiftClosedExpected">$0</div></div></div>
                             <div class="col"><div class="shift-kpi"><div class="label">現金差額</div><div class="value" id="shiftClosedDifference">$0</div></div></div>
                         </div>
-                        <div id="shiftDifferenceNoteView" class="alert alert-light border mb-3 d-none"></div>
+                        <div id="shiftDifferenceNoteView" class="alert alert-light border mb-2 d-none"></div>
+                        <div id="shiftClosingNoteView" class="alert alert-info border mb-3 d-none"></div>
                         <button class="btn btn-outline-danger w-100 fw-bold" onclick="reopenBusinessDay()">🔓 需要修改？重新開帳</button>
                     </div>
                 </div>
@@ -622,6 +643,31 @@
 
 <!-- ================= Modal 區塊 ================= -->
 
+<div class="modal fade" id="lowStockModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white"><div><h5 class="modal-title fw-bold mb-0">⚠️ 待補貨清單</h5><div class="small opacity-75">庫存小於或等於安全線的型號</div></div><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body bg-light"><div id="lowStockList" class="d-flex flex-column gap-2"></div></div>
+            <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal">關閉</button><button class="btn btn-success fw-bold" onclick="addAllLowStockToRestock()">🛒 全部加入進貨車</button></div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="stocktakeModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white"><div><h5 class="modal-title fw-bold mb-0">🧮 庫存盤點</h5><div class="small opacity-75">系統庫存 vs 實際數量，儲存後自動調整並留下盤點紀錄</div></div><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body bg-light">
+                <input id="stocktakeSearch" class="form-control mb-2" placeholder="🔍 搜尋商品／型號" oninput="filterStocktakeRows()">
+                <input id="stocktakeNote" class="form-control mb-3" placeholder="盤點備註（選填，例如：月底盤點）">
+                <div id="stocktakeList" class="d-flex flex-column gap-2"></div>
+                <hr><div class="fw-bold mb-2">最近盤點紀錄</div><div id="stocktakeHistory" class="small"></div>
+            </div>
+            <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-success fw-bold" onclick="submitStocktake()">💾 儲存盤點結果</button></div>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="settingsModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -633,6 +679,19 @@
                 <div class="fw-bold mb-2">💳 付款方式</div>
                 <div class="input-group mb-2"><input id="newPaymentMethod" class="form-control" placeholder="新增付款方式"><button class="btn btn-outline-dark fw-bold" onclick="addPaymentMethod()">新增</button></div>
                 <div id="paymentMethodSettingsList" class="d-flex flex-wrap gap-2"></div>
+                <hr>
+                <div class="fw-bold mb-2">🛠️ 系統與備份</div>
+                <div class="border rounded p-3 bg-light mb-2">
+                    <div class="d-flex justify-content-between mb-1"><span class="text-secondary">目前版本</span><span class="fw-bold" id="systemVersionText">讀取中...</span></div>
+                    <div class="d-flex justify-content-between mb-1"><span class="text-secondary">資料儲存</span><span class="fw-bold" id="systemStorageText">讀取中...</span></div>
+                    <div class="d-flex justify-content-between mb-1"><span class="text-secondary">最新備份</span><span class="fw-bold" id="systemLatestBackupText">讀取中...</span></div>
+                    <div class="d-flex justify-content-between"><span class="text-secondary">備份保留</span><span class="small fw-bold text-end" id="systemBackupCountText">讀取中...</span></div>
+                </div>
+                <div class="d-grid gap-2 d-sm-flex">
+                    <button type="button" class="btn btn-outline-primary fw-bold flex-fill" onclick="createManualBackup(this)">🛡️ 立即備份</button>
+                    <button type="button" class="btn btn-outline-success fw-bold flex-fill" onclick="downloadDatabaseBackup()">⬇️ 下載備份</button>
+                </div>
+                <div class="small text-secondary mt-2">更新新版時只更新程式，<strong>/data/pos.db 不會跟著重建</strong>。建議每次更新前先按「立即備份」，並定期下載一份到電腦或雲端。</div>
             </div>
             <div class="modal-footer p-2"><button class="btn btn-dark w-100 fw-bold" onclick="saveSettings()">💾 儲存設定</button></div>
         </div>
@@ -867,7 +926,9 @@
         let storeDisplayName = '配件 POS';
  
     let allProducts = [], cart = [], currentSubItems = [];
-    let restockCart = []; 
+    let restockCart = [];
+    let lowStockData = [];
+    let stocktakeData = []; 
     let batchHistoryRaw = [];
     let ordersHistoryRaw = [], editOrderRows = [];
     let variantSheetCartIndex = null, variantSheetProductId = null; 
@@ -1062,8 +1123,46 @@
         document.getElementById('settingsStoreName').value = data.store_name || '';
         document.getElementById('settingsReportTitle').value = data.report_title || '';
         document.getElementById('newPaymentMethod').value = '';
-        await renderPaymentMethodSettings();
+        await Promise.all([renderPaymentMethodSettings(), loadSystemStatus()]);
         settingsModalObj.show();
+    }
+
+    async function loadSystemStatus() {
+        try {
+            const res = await fetch('/api/system/status');
+            const data = await res.json();
+            if(!res.ok) throw new Error(data.message || '讀取失敗');
+            document.getElementById('systemVersionText').textContent = `V${data.version || '-'}`;
+            const storageEl = document.getElementById('systemStorageText');
+            storageEl.textContent = data.persistent_storage ? '永久硬碟 /data ✅' : `${data.storage || '-'} ⚠️`;
+            storageEl.className = data.persistent_storage ? 'fw-bold text-success' : 'fw-bold text-danger';
+            document.getElementById('systemLatestBackupText').textContent = data.latest_backup || '尚無備份';
+            document.getElementById('systemBackupCountText').textContent = `小時 ${data.hourly_count || 0}｜每日 ${data.daily_count || 0}｜手動 ${data.manual_count || 0}`;
+        } catch(e) {
+            document.getElementById('systemVersionText').textContent = '讀取失敗';
+            document.getElementById('systemStorageText').textContent = '-';
+            document.getElementById('systemLatestBackupText').textContent = '-';
+            document.getElementById('systemBackupCountText').textContent = '-';
+        }
+    }
+
+    async function createManualBackup(btn) {
+        const original = btn.innerHTML; btn.disabled = true; btn.innerHTML = '⏳ 備份中...';
+        try {
+            const res = await fetch('/api/system/backup', {method:'POST'});
+            const data = await res.json();
+            if(!res.ok) { alert(data.message || '備份失敗'); return; }
+            alert(`✅ 備份完成！\n${data.file || ''}`);
+            await loadSystemStatus();
+        } catch(e) { alert('備份失敗，請檢查連線。'); }
+        finally { btn.disabled = false; btn.innerHTML = original; }
+    }
+
+    function downloadDatabaseBackup() {
+        const a = document.createElement('a');
+        a.href = '/api/system/backup/download';
+        a.download = '';
+        document.body.appendChild(a); a.click(); a.remove();
     }
 
     async function saveSettings() {
@@ -1435,6 +1534,7 @@
             const b=document.createElement('button'); b.className='btn btn-sm btn-outline-primary py-0 px-3 fw-bold shadow-sm'; b.textContent='✏️ 編輯修改'; b.onclick=()=>openProductEditModal(p.id); edit.appendChild(b);
             tr.append(nameCell,cost,price,stock,edit); tbody.appendChild(tr);
         });
+        refreshLowStockBadge();
     }
 
     function syncProductStockControls() {
@@ -1652,6 +1752,104 @@ const batch = batchHistoryRaw.find(b => b.batch_no === batch_no); if(!batch) ret
     async function copyVariants() { const src_id = document.getElementById('copyFromProduct').value; const tgt_id = document.getElementById('currentParentProductId').value; if(!src_id) return; if(src_id === tgt_id) { alert("不能複製自己！"); return; } if(confirm("確定帶入該商品所有版型？")) { await fetch('/api/variants/copy', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source_id: src_id, target_id: tgt_id}) }); openSubItemModal(tgt_id, document.getElementById('subItemParentName').innerText); loadInventory(); loadProducts(); } }
     async function deleteSubItem(vid) { const pid = document.getElementById('currentParentProductId').value; if(confirm("確定刪除此細項？")) { await fetch(`/api/variants?id=${vid}&product_id=${pid}`, { method:'DELETE' }); openSubItemModal(pid, document.getElementById('subItemParentName').innerText); loadInventory(); loadProducts(); } }
 
+    async function refreshLowStockBadge() {
+        try {
+            const res = await fetch('/api/low_stock');
+            if(!res.ok) return;
+            lowStockData = await res.json();
+            const badge=document.getElementById('lowStockCountBadge');
+            if(badge) badge.textContent=lowStockData.length;
+        } catch(e) {}
+    }
+
+    async function openLowStockModal() {
+        const res=await fetch('/api/low_stock'); const data=await res.json();
+        if(!res.ok){alert(data.message||'待補貨清單讀取失敗');return;}
+        lowStockData=data||[];
+        const box=document.getElementById('lowStockList'); box.innerHTML='';
+        if(!lowStockData.length){box.innerHTML='<div class="text-center text-success fw-bold py-5">✅ 目前沒有低庫存商品</div>';}
+        lowStockData.forEach((x,i)=>{
+            const name=x.variant_name?`${x.product_name} (${x.variant_name})`:x.product_name;
+            const row=document.createElement('div'); row.className='low-stock-row d-flex justify-content-between align-items-center gap-2 flex-wrap';
+            row.innerHTML=`<div class="flex-grow-1"><div class="fw-bold low-stock-name"></div><div class="small text-secondary">目前 ${x.stock}｜安全線 ${x.threshold}</div></div><div class="input-group" style="max-width:150px"><span class="input-group-text">補</span><input type="number" min="1" class="form-control text-center fw-bold low-stock-qty" data-index="${i}" value="${x.suggested_restock}"></div><button class="btn btn-sm btn-success fw-bold" onclick="addLowStockToRestock(${i})">＋ 加入</button>`;
+            row.querySelector('.low-stock-name').textContent=name; box.appendChild(row);
+        });
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('lowStockModal')).show();
+        const badge=document.getElementById('lowStockCountBadge'); if(badge) badge.textContent=lowStockData.length;
+    }
+
+    function _lowStockQty(index) {
+        const el=document.querySelector(`.low-stock-qty[data-index="${index}"]`);
+        return Math.max(1, parseInt(el?.value||lowStockData[index]?.suggested_restock||1));
+    }
+
+    function addLowStockToRestock(index, silent=false) {
+        const x=lowStockData[index]; if(!x) return;
+        const qty=_lowStockQty(index);
+        const existing=restockCart.find(r=>String(r.product_id)===String(x.product_id)&&String(r.variant_id||'')===String(x.variant_id||''));
+        if(existing) existing.quantity+=qty;
+        else restockCart.push({product_id:x.product_id,product_name:x.product_name,variant_id:x.variant_id,variant_name:x.variant_name||'',quantity:qty});
+        renderRestockCart();
+        if(!silent) alert('✅ 已加入進貨購物車');
+    }
+
+    function addAllLowStockToRestock() {
+        lowStockData.forEach((_,i)=>addLowStockToRestock(i,true));
+        renderRestockCart();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('lowStockModal')).hide();
+        const tabBtn=document.querySelector('#posTabs button[data-bs-target="#restockLogTab"]'); if(tabBtn) bootstrap.Tab.getOrCreateInstance(tabBtn).show();
+        alert('✅ 待補貨品項已全部加入進貨購物車，可再調整數量後送出。');
+    }
+
+    async function openStocktakeModal() {
+        const res=await fetch('/api/stocktake'); const data=await res.json();
+        if(!res.ok){alert(data.message||'盤點資料讀取失敗');return;}
+        stocktakeData=data||[];
+        const box=document.getElementById('stocktakeList'); box.innerHTML='';
+        stocktakeData.forEach((x,i)=>{
+            const name=x.variant_name?`${x.product_name} (${x.variant_name})`:x.product_name;
+            const row=document.createElement('div'); row.className='stocktake-row'; row.dataset.search=name.toLowerCase(); row.dataset.index=i;
+            row.innerHTML=`<div class="row g-2 align-items-center"><div class="col-12 col-md-5"><div class="fw-bold stocktake-name"></div><div class="small text-secondary">系統庫存：<span class="fw-bold">${x.stock}</span>｜安全線：${x.threshold}</div></div><div class="col-7 col-md-4"><label class="small fw-bold text-secondary">實際庫存</label><input type="number" min="0" class="form-control fw-bold text-center stocktake-actual" data-index="${i}" value="${x.stock}" oninput="updateStocktakeDiff(${i})"></div><div class="col-5 col-md-3 text-end"><div class="small text-secondary">差異</div><div id="stocktakeDiff-${i}" class="stocktake-diff-zero">0</div></div></div>`;
+            row.querySelector('.stocktake-name').textContent=name; box.appendChild(row);
+        });
+        document.getElementById('stocktakeSearch').value=''; document.getElementById('stocktakeNote').value='';
+        await loadStocktakeHistory();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('stocktakeModal')).show();
+    }
+
+    function updateStocktakeDiff(index) {
+        const input=document.querySelector(`.stocktake-actual[data-index="${index}"]`); const el=document.getElementById(`stocktakeDiff-${index}`); if(!input||!el) return;
+        const expected=Number(stocktakeData[index]?.stock||0); const actual=Math.max(0,Number(input.value||0)); const diff=actual-expected;
+        el.textContent=(diff>0?'+':'')+diff; el.className=diff>0?'stocktake-diff-positive':diff<0?'stocktake-diff-negative':'stocktake-diff-zero';
+    }
+
+    function filterStocktakeRows() {
+        const q=(document.getElementById('stocktakeSearch').value||'').toLowerCase();
+        document.querySelectorAll('#stocktakeList .stocktake-row').forEach(row=>row.classList.toggle('d-none',!row.dataset.search.includes(q)));
+    }
+
+    async function submitStocktake() {
+        const items=stocktakeData.map((x,i)=>({product_id:x.product_id,variant_id:x.variant_id,actual_stock:Math.max(0,parseInt(document.querySelector(`.stocktake-actual[data-index="${i}"]`)?.value||0))}));
+        const changed=items.filter((x,i)=>x.actual_stock!==Number(stocktakeData[i].stock||0)).length;
+        if(!confirm(`確認儲存盤點？\n共 ${items.length} 項，${changed} 項有庫存差異。\n\n儲存後會直接修正庫存並留下盤點紀錄。`)) return;
+        const note=document.getElementById('stocktakeNote').value.trim();
+        const res=await fetch('/api/stocktake',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items,note})}); const data=await res.json();
+        if(!res.ok){alert(data.message||'盤點儲存失敗');return;}
+        alert(`✅ 盤點完成，差異 ${data.changed_count} 項`); bootstrap.Modal.getOrCreateInstance(document.getElementById('stocktakeModal')).hide();
+        loadInventory(); loadProducts(); refreshLowStockBadge(); loadAuditLogs();
+    }
+
+    async function loadStocktakeHistory() {
+        const res=await fetch('/api/stocktake/logs'); if(!res.ok) return; const rows=await res.json(); const box=document.getElementById('stocktakeHistory'); box.innerHTML='';
+        if(!rows.length){box.innerHTML='<div class="text-secondary">尚無盤點紀錄</div>';return;}
+        rows.slice(0,8).forEach(r=>{
+            const changed=(r.items||[]).filter(x=>Number(x.difference)!==0); const row=document.createElement('div'); row.className='border rounded p-2 mb-2 bg-white';
+            const summary=changed.length?changed.slice(0,4).map(x=>`${x.product_name} ${Number(x.difference)>0?'+':''}${x.difference}`).join('、'):'無差異';
+            row.innerHTML=`<div class="d-flex justify-content-between gap-2"><span class="fw-bold"></span><span class="text-secondary">${r.created_at||''}</span></div><div class="text-secondary mt-1 stocktake-history-summary"></div>`;
+            row.querySelector('.fw-bold').textContent=`${r.partner_name||'未知'}｜${r.batch_no}`; row.querySelector('.stocktake-history-summary').textContent=summary+(r.note?`｜${r.note}`:''); box.appendChild(row);
+        });
+    }
+
     function money(v) { return '$' + Math.round(Number(v || 0)).toLocaleString('zh-TW'); }
 
     let currentBusinessDayData = null;
@@ -1688,18 +1886,20 @@ const batch = batchHistoryRaw.find(b => b.batch_no === batch_no); if(!batch) ret
         const editOpenBtn=document.getElementById('editOpeningCashBtn'); if(editOpenBtn) editOpenBtn.classList.toggle('d-none', status!=='open');
         if(status==='not_opened') return;
         document.getElementById('shiftRevenue').textContent=money(s.revenue); document.getElementById('shiftCost').textContent=money(s.cost); document.getElementById('shiftExpenses').textContent=money(s.expenses); document.getElementById('shiftProfit').textContent=money(s.net_profit);
+        document.getElementById('shiftOrdersCount').textContent=`${Number(s.orders_count||0)} 單`; document.getElementById('shiftPartners').textContent=(s.partners&&s.partners.length)?s.partners.join('、'):'無資料';
         document.getElementById('shiftOpeningCash').textContent=money(s.opening_cash); document.getElementById('shiftCashSales').textContent=money(s.cash_sales); document.getElementById('shiftCashExpenses').textContent='-'+money(s.cash_expenses); document.getElementById('shiftExpectedCash').textContent=money(s.expected_cash);
         const pay=document.getElementById('shiftPaymentList'); pay.innerHTML='';
         const entries=Object.entries(s.payments||{}); if(!entries.length) pay.innerHTML='<div class="text-secondary">今天尚無付款紀錄</div>';
         entries.forEach(([name,amt])=>{const row=document.createElement('div');row.className='d-flex justify-content-between py-2 border-bottom';const a=document.createElement('span');a.className='fw-bold';a.textContent=name;const b=document.createElement('strong');b.textContent=money(amt);row.append(a,b);pay.appendChild(row)});
         if(status==='open'){
             document.getElementById('shiftOpenedInfo').textContent=`開班人：${day.opened_by||'未知'} ｜ ${day.opened_at||''}`;
-            document.getElementById('countedCashInput').value=''; document.getElementById('cashDifferenceNote').value=''; updateCashDifference();
+            document.getElementById('countedCashInput').value=''; document.getElementById('cashDifferenceNote').value=''; document.getElementById('closingNoteInput').value=''; updateCashDifference();
         } else {
             document.getElementById('shiftClosedInfo').textContent=`關帳人：${day.closed_by||'未知'} ｜ ${day.closed_at||''}${Number(day.reopen_count||0)>0?` ｜ 曾重新開帳 ${day.reopen_count} 次`:''}`;
             document.getElementById('shiftCountedCash').textContent=money(day.counted_cash); document.getElementById('shiftClosedExpected').textContent=money(day.expected_cash);
             const diff=Number(day.cash_difference||0); const diffEl=document.getElementById('shiftClosedDifference'); diffEl.textContent=(diff>0?'+':'')+money(diff); diffEl.className='value '+(diff===0?'cash-diff-good':'cash-diff-bad');
             const note=document.getElementById('shiftDifferenceNoteView'); note.classList.toggle('d-none',!day.difference_note); note.textContent=day.difference_note?`差異原因：${day.difference_note}`:'';
+            const closeNote=document.getElementById('shiftClosingNoteView'); closeNote.classList.toggle('d-none',!day.closing_note); closeNote.textContent=day.closing_note?`關帳備註：${day.closing_note}`:'';
         }
     }
 
@@ -1723,12 +1923,12 @@ const batch = batchHistoryRaw.find(b => b.batch_no === batch_no); if(!batch) ret
     }
 
     async function closeBusinessDay() {
-        const date=document.getElementById('businessDayDateInput').value; const counted=document.getElementById('countedCashInput').value; const note=document.getElementById('cashDifferenceNote').value.trim();
+        const date=document.getElementById('businessDayDateInput').value; const counted=document.getElementById('countedCashInput').value; const note=document.getElementById('cashDifferenceNote').value.trim(); const closingNote=document.getElementById('closingNoteInput').value.trim();
         if(counted===''){alert('請先輸入實際盤點現金');return;}
         const expected=Number(currentBusinessDayData?.summary?.expected_cash||0); const diff=Number(counted)-expected;
         if(Math.abs(diff)>=0.01 && !note){alert('有現金差額時必須填寫差異原因');return;}
         if(!confirm(`確認關帳？\n系統應有：${money(expected)}\n實際盤點：${money(counted)}\n差額：${diff>0?'+':''}${money(diff)}\n\n關帳後當日銷售與費用會鎖定。`)) return;
-        const res=await fetch('/api/business_day/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date,counted_cash:counted,difference_note:note})}); const data=await res.json();
+        const res=await fetch('/api/business_day/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date,counted_cash:counted,difference_note:note,closing_note:closingNote})}); const data=await res.json();
         if(!res.ok){alert(data.message||'關帳失敗');return;} await loadBusinessDay(); loadReport(); loadAuditLogs(); alert('✅ 今日關帳完成');
     }
 
