@@ -1,4 +1,4 @@
 {
-  "version": "1.5.3",
-  "release_notes": "安全更新：登入 PIN 防暴力破解、12 小時 Session、CSRF 防護、Secure Cookie、安全標頭、敏感操作二次驗證；新設或修改 PIN 改為至少 6 碼，既有 PIN 仍可登入。"
+  "version": "1.5.4",
+  "release_notes": "修正人員權限漏洞：其他使用者的 PIN 不可被重設；新增/編輯人員需再次驗證目前登入者 PIN；本人才能修改自己的 PIN；禁止刪除目前登入中的帳號。"
 }

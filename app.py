@@ -19,7 +19,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 TW_TZ = ZoneInfo("Asia/Taipei")
 DB_NAME = "pos.db"
-APP_VERSION = "1.5.3"
+APP_VERSION = "1.5.4"
 UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/ab0975548810-cloud/fans-phone/main/version.json"
 
 
@@ -1019,23 +1019,46 @@ def handle_partners():
             return jsonify({"message": "請先登入"}), 401
 
         if request.method == "POST":
+            if not _recently_reauthed():
+                return jsonify({"message": "人員資料異動前需要再次輸入目前使用者 PIN", "code": "reauth_required"}), 403
+
             data = request.get_json() or {}
             pid = data.get("id")
             name = str(data.get("name", "")).strip()
             pin = str(data.get("password", "")).strip()
             if not name:
                 return jsonify({"message": "使用者名稱不可空白"}), 400
+
             try:
                 if pid:
+                    try:
+                        pid_int = int(pid)
+                    except (TypeError, ValueError):
+                        return jsonify({"message": "使用者編號錯誤"}), 400
+                    target = cursor.execute("SELECT id, name FROM partners WHERE id=?", (pid_int,)).fetchone()
+                    if not target:
+                        return jsonify({"message": "找不到此使用者"}), 404
+                    is_self = int(session.get("partner_id")) == pid_int
+
+                    # 身分 PIN 只能本人修改。不能先重設別人的 PIN 再冒用該帳號。
+                    if pin and not is_self:
+                        log_action(cursor, "阻擋 PIN 修改", f"嘗試修改其他使用者 PIN：{target['name']}")
+                        conn.commit()
+                        return jsonify({"message": "⛔ 不能修改其他使用者的 PIN；PIN 只能由本人登入後修改", "code": "target_pin_forbidden"}), 403
+
                     if pin:
                         if len(pin) < 6:
                             return jsonify({"message": "PIN 至少 6 碼"}), 400
                         cursor.execute(
                             "UPDATE partners SET name=?, password_hash=? WHERE id=?",
-                            (name, generate_password_hash(pin), pid),
+                            (name, generate_password_hash(pin), pid_int),
                         )
                     else:
-                        cursor.execute("UPDATE partners SET name=? WHERE id=?", (name, pid))
+                        cursor.execute("UPDATE partners SET name=? WHERE id=?", (name, pid_int))
+
+                    if is_self:
+                        session["partner_name"] = name
+                    log_action(cursor, "使用者管理", f"編輯：{target['name']} → {name}" + ("；本人修改 PIN" if pin else ""))
                 else:
                     if len(pin) < 6:
                         return jsonify({"message": "新增使用者時 PIN 至少 6 碼"}), 400
@@ -1043,20 +1066,30 @@ def handle_partners():
                         "INSERT INTO partners (name, password_hash) VALUES (?, ?)",
                         (name, generate_password_hash(pin)),
                     )
-                log_action(cursor, "使用者管理", f"{'編輯' if pid else '新增'}：{name}")
+                    log_action(cursor, "使用者管理", f"新增：{name}")
+
                 conn.commit()
                 return jsonify({"status": "success"})
             except sqlite3.IntegrityError:
+                conn.rollback()
                 return jsonify({"message": "使用者名稱已存在"}), 400
 
         if not _recently_reauthed():
             return jsonify({"message": "刪除使用者前需要再次輸入目前使用者 PIN", "code": "reauth_required"}), 403
         pid = request.args.get("id")
+        try:
+            pid_int = int(pid)
+        except (TypeError, ValueError):
+            return jsonify({"message": "使用者編號錯誤"}), 400
+        if pid_int == int(session.get("partner_id")):
+            return jsonify({"message": "不能刪除目前正在登入的帳號；請先由其他使用者登入再操作"}), 400
         if cursor.execute("SELECT COUNT(*) FROM partners").fetchone()[0] <= 1:
             return jsonify({"message": "至少保留一位使用者"}), 400
-        old = cursor.execute("SELECT name FROM partners WHERE id=?", (pid,)).fetchone()
-        cursor.execute("DELETE FROM partners WHERE id=?", (pid,))
-        log_action(cursor, "刪除使用者", old["name"] if old else str(pid))
+        old = cursor.execute("SELECT name FROM partners WHERE id=?", (pid_int,)).fetchone()
+        if not old:
+            return jsonify({"message": "找不到此使用者"}), 404
+        cursor.execute("DELETE FROM partners WHERE id=?", (pid_int,))
+        log_action(cursor, "刪除使用者", old["name"])
         conn.commit()
         return jsonify({"status": "success"})
     finally:

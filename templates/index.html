@@ -929,6 +929,7 @@
     };
 
         let storeDisplayName = '配件 POS';
+    let currentPartnerName = '';
  
     let allProducts = [], cart = [], currentSubItems = [];
     let restockCart = [];
@@ -1022,6 +1023,7 @@
         document.getElementById('setupOverlay').style.display = 'none';
         document.getElementById('loginOverlay').style.display = 'none';
         document.getElementById('mainAppContent').style.display = 'block';
+        currentPartnerName = auth.partner || '';
         document.getElementById('headerPartnerName').innerText = `👋 ${auth.partner} - `;
         await loadStoreSettings();
         await loadPaymentMethods();
@@ -1093,7 +1095,10 @@
     function openPartnerModal() {
         document.getElementById('editPartnerId').value = '';
         document.getElementById('newPartnerName').value = '';
-        document.getElementById('newPartnerPwd').value = '';
+        const pinEl = document.getElementById('newPartnerPwd');
+        pinEl.value = '';
+        pinEl.disabled = false;
+        pinEl.placeholder = '設定 PIN（至少 6 碼）';
         document.getElementById('savePartnerBtn').innerText = '新增';
         loadPeople(); partnerModalObj.show();
     }
@@ -1101,7 +1106,11 @@
     function editPartner(id, name) {
         document.getElementById('editPartnerId').value = id;
         document.getElementById('newPartnerName').value = name;
-        document.getElementById('newPartnerPwd').value = '';
+        const pinEl = document.getElementById('newPartnerPwd');
+        pinEl.value = '';
+        const isSelf = name === currentPartnerName;
+        pinEl.disabled = !isSelf;
+        pinEl.placeholder = isSelf ? '修改自己的 PIN（至少 6 碼；不改可留白）' : '🔒 只有本人可以修改自己的 PIN';
         document.getElementById('savePartnerBtn').innerText = '💾 儲存修改';
     }
 
@@ -1110,6 +1119,7 @@
         const name = document.getElementById('newPartnerName').value.trim();
         const pwd = document.getElementById('newPartnerPwd').value.trim();
         if(!name || (!id && !pwd)) { alert('新增使用者需填名稱與 PIN；編輯時 PIN 可留白。'); return; }
+        if(!await ensureSensitiveAuth()) return;
         const payload = {name, password: pwd}; if(id) payload.id = id;
         const res = await fetch('/api/partners', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
         const data = await res.json();
