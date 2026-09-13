@@ -1,0 +1,493 @@
+name: Apply POS V1.5.3 security hardening
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-security-v153.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch V1.5.3 security
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, re
+
+          app = Path('app.py')
+          s = app.read_text(encoding='utf-8')
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'{label} marker not found')
+              return text.replace(old, new, 1)
+
+          if 'import hmac' not in s:
+              s = replace_once(s, 'import urllib.error\n', 'import urllib.error\nimport hmac\nfrom urllib.parse import urlparse\n', 'import')
+
+          s = s.replace('APP_VERSION = "1.5.2"', 'APP_VERSION = "1.5.3"')
+
+          old_config = '''app.secret_key = load_or_create_secret_key()
+          app.config.update(
+              SESSION_COOKIE_HTTPONLY=True,
+              SESSION_COOKIE_SAMESITE="Lax",
+              SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "0") == "1",
+          )
+          '''
+          new_config = '''app.secret_key = load_or_create_secret_key()
+          app.config.update(
+              SESSION_COOKIE_HTTPONLY=True,
+              SESSION_COOKIE_SAMESITE="Lax",
+              SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "1") != "0",
+              PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+              SESSION_REFRESH_EACH_REQUEST=True,
+          )
+          '''
+          if old_config in s:
+              s = s.replace(old_config, new_config, 1)
+
+          old_headers = '''    response.headers["X-Content-Type-Options"] = "nosniff"
+              response.headers["X-Frame-Options"] = "SAMEORIGIN"
+              return response
+          '''
+          new_headers = '''    response.headers["X-Content-Type-Options"] = "nosniff"
+              response.headers["X-Frame-Options"] = "SAMEORIGIN"
+              response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+              response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+              response.headers["Content-Security-Policy"] = (
+                  "default-src 'self'; "
+                  "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+                  "font-src 'self' https://fonts.gstatic.com data:; "
+                  "img-src 'self' data: blob:; connect-src 'self'; "
+                  "frame-ancestors 'self'; base-uri 'self'; form-action 'self'"
+              )
+              if request.is_secure or request.headers.get("X-Forwarded-Proto", "").lower() == "https":
+                  response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+              return response
+          '''
+          if old_headers in s:
+              s = s.replace(old_headers, new_headers, 1)
+
+          marker = '''def setup_completed(cursor):
+              return get_setting(cursor, "setup_completed", "0") == "1"
+
+
+          def require_auth(f):
+          '''
+          security_helpers = '''def setup_completed(cursor):
+              return get_setting(cursor, "setup_completed", "0") == "1"
+
+
+          LOGIN_MAX_ATTEMPTS = 5
+          LOGIN_LOCK_SECONDS = 15 * 60
+          LOGIN_RESET_SECONDS = 30 * 60
+
+
+          def ensure_csrf_token():
+              token = session.get("csrf_token")
+              if not token:
+                  token = secrets.token_urlsafe(32)
+                  session["csrf_token"] = token
+              return token
+
+
+          def _client_ip():
+              forwarded = str(request.headers.get("X-Forwarded-For", "")).split(",")[0].strip()
+              return forwarded or request.remote_addr or "unknown"
+
+
+          def _login_keys(partner_name):
+              name = str(partner_name or "").strip().casefold() or "unknown"
+              return (f"account:{name}", f"ip:{_client_ip()}")
+
+
+          def _login_lock_remaining(cursor, partner_name):
+              now = int(time.time())
+              remaining = 0
+              for key in _login_keys(partner_name):
+                  row = cursor.execute(
+                      "SELECT locked_until FROM login_security WHERE login_key=?",
+                      (key,),
+                  ).fetchone()
+                  if row:
+                      remaining = max(remaining, int(row["locked_until"] or 0) - now)
+              return max(0, remaining)
+
+
+          def _record_login_failure(cursor, partner_name):
+              now = int(time.time())
+              highest = 0
+              locked = False
+              for key in _login_keys(partner_name):
+                  row = cursor.execute(
+                      "SELECT fail_count, locked_until, updated_at FROM login_security WHERE login_key=?",
+                      (key,),
+                  ).fetchone()
+                  if row and int(row["locked_until"] or 0) > now:
+                      highest = max(highest, int(row["fail_count"] or LOGIN_MAX_ATTEMPTS))
+                      locked = True
+                      continue
+                  count = int(row["fail_count"] or 0) if row else 0
+                  updated = int(row["updated_at"] or 0) if row else 0
+                  if not updated or now - updated > LOGIN_RESET_SECONDS:
+                      count = 0
+                  count += 1
+                  locked_until = now + LOGIN_LOCK_SECONDS if count >= LOGIN_MAX_ATTEMPTS else 0
+                  cursor.execute(
+                      "INSERT INTO login_security (login_key, fail_count, locked_until, updated_at) VALUES (?, ?, ?, ?) "
+                      "ON CONFLICT(login_key) DO UPDATE SET fail_count=excluded.fail_count, locked_until=excluded.locked_until, updated_at=excluded.updated_at",
+                      (key, count, locked_until, now),
+                  )
+                  highest = max(highest, count)
+                  locked = locked or bool(locked_until)
+              return highest, locked
+
+
+          def _clear_login_failures(cursor, partner_name):
+              for key in _login_keys(partner_name):
+                  cursor.execute("DELETE FROM login_security WHERE login_key=?", (key,))
+
+
+          def _recently_reauthed():
+              return int(session.get("reauth_until", 0) or 0) >= int(time.time())
+
+
+          def require_recent_reauth(f):
+              @wraps(f)
+              def decorated_function(*args, **kwargs):
+                  if not session.get("partner_id"):
+                      return jsonify({"message": "⛔ 登入已失效，請重新登入"}), 401
+                  if not _recently_reauthed():
+                      return jsonify({"message": "此操作需要再次驗證目前使用者 PIN", "code": "reauth_required"}), 403
+                  return f(*args, **kwargs)
+              return decorated_function
+
+
+          @app.before_request
+          def enforce_request_security():
+              if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+                  return None
+              origin = request.headers.get("Origin")
+              if origin:
+                  try:
+                      origin_host = urlparse(origin).netloc
+                  except Exception:
+                      origin_host = ""
+                  if origin_host and origin_host != request.host:
+                      return jsonify({"message": "⛔ 跨站請求已阻擋"}), 403
+              if session.get("partner_id") and request.path not in {"/api/auth/login", "/api/setup"}:
+                  expected = str(session.get("csrf_token") or "")
+                  supplied = str(request.headers.get("X-CSRF-Token") or "")
+                  if not expected or not supplied or not hmac.compare_digest(expected, supplied):
+                      return jsonify({"message": "⛔ 安全驗證失敗，請重新整理後再試", "code": "csrf_failed"}), 403
+              return None
+
+
+          def require_auth(f):
+          '''
+          if 'LOGIN_MAX_ATTEMPTS = 5' not in s:
+              s = replace_once(s, marker, security_helpers, 'security helpers')
+
+          login_table_marker = '''        cursor.execute("""
+              CREATE TABLE IF NOT EXISTS business_days (
+          '''
+          login_table = '''        cursor.execute("""
+              CREATE TABLE IF NOT EXISTS login_security (
+                  login_key TEXT PRIMARY KEY,
+                  fail_count INTEGER NOT NULL DEFAULT 0,
+                  locked_until INTEGER NOT NULL DEFAULT 0,
+                  updated_at INTEGER NOT NULL DEFAULT 0
+              )
+          """)
+          ''' + login_table_marker
+          if 'CREATE TABLE IF NOT EXISTS login_security' not in s:
+              s = replace_once(s, login_table_marker, login_table, 'login_security table')
+
+          s = s.replace('len(partner_pin) < 4', 'len(partner_pin) < 6')
+          s = s.replace('個人 PIN 至少 4 碼', '個人 PIN 至少 6 碼')
+          s = s.replace('if len(pin) < 4:', 'if len(pin) < 6:')
+          s = s.replace('PIN 至少 4 碼', 'PIN 至少 6 碼')
+          s = s.replace('新增使用者時 PIN 至少 4 碼', '新增使用者時 PIN 至少 6 碼')
+
+          setup_session = '''        session["partner_id"] = partner_id
+              session["partner_name"] = partner_name
+              log_action(cursor, "首次設定", f"建立店家：{store_name}")
+          '''
+          setup_session_new = '''        session["partner_id"] = partner_id
+              session["partner_name"] = partner_name
+              session.permanent = True
+              ensure_csrf_token()
+              log_action(cursor, "首次設定", f"建立店家：{store_name}")
+          '''
+          if setup_session in s:
+              s = s.replace(setup_session, setup_session_new, 1)
+
+          auth_status_pattern = re.compile(r'@app\.route\("/api/auth/status", methods=\["GET"\]\)\ndef auth_status\(\):\n.*?(?=\n\n@app\.route\("/api/auth/login")', re.S)
+          auth_status_new = '''@app.route("/api/auth/status", methods=["GET"])
+          def auth_status():
+              logged_in = bool(session.get("partner_id"))
+              csrf_token = ""
+              if logged_in:
+                  session.permanent = True
+                  csrf_token = ensure_csrf_token()
+              return jsonify({
+                  "logged_in": logged_in,
+                  "partner": session.get("partner_name", ""),
+                  "csrf_token": csrf_token,
+              })
+          '''
+          s, n = auth_status_pattern.subn(auth_status_new, s, count=1)
+          if n != 1:
+              raise SystemExit('auth_status patch failed')
+
+          login_pattern = re.compile(r'@app\.route\("/api/auth/login", methods=\["POST"\]\)\ndef auth_login\(\):\n.*?(?=\n\n@app\.route\("/api/auth/logout")', re.S)
+          login_new = '''@app.route("/api/auth/login", methods=["POST"])
+          def auth_login():
+              data = request.get_json() or {}
+              partner_name = str(data.get("partner_name", "")).strip()
+              pwd = str(data.get("password", "")).strip()
+              if not partner_name or not pwd:
+                  return jsonify({"message": "請選擇使用者並輸入 PIN"}), 400
+              conn = get_db_connection()
+              try:
+                  cursor = conn.cursor()
+                  if not setup_completed(cursor):
+                      return jsonify({"message": "請先完成首次設定"}), 409
+                  remaining = _login_lock_remaining(cursor, partner_name)
+                  if remaining > 0:
+                      minutes = max(1, (remaining + 59) // 60)
+                      return jsonify({"message": f"登入嘗試過多，請約 {minutes} 分鐘後再試", "retry_after": remaining}), 429
+                  user = cursor.execute(
+                      "SELECT id, name, password_hash FROM partners WHERE name=?",
+                      (partner_name,),
+                  ).fetchone()
+                  if user and user["password_hash"] and check_password_hash(user["password_hash"], pwd):
+                      _clear_login_failures(cursor, partner_name)
+                      session.clear()
+                      session["partner_id"] = user["id"]
+                      session["partner_name"] = user["name"]
+                      session.permanent = True
+                      csrf_token = ensure_csrf_token()
+                      log_action(cursor, "登入", "登入 POS")
+                      conn.commit()
+                      return jsonify({"status": "success", "partner": user["name"], "csrf_token": csrf_token})
+                  fail_count, locked = _record_login_failure(cursor, partner_name)
+                  attempts_left = max(0, LOGIN_MAX_ATTEMPTS - fail_count)
+                  cursor.execute(
+                      "INSERT INTO audit_logs (created_at, partner_name, action, detail) VALUES (?, ?, ?, ?)",
+                      (now_tw().strftime("%Y-%m-%d %H:%M:%S"), partner_name or "未知", "登入失敗", "已觸發暫時鎖定" if locked else f"PIN 錯誤；剩餘嘗試 {attempts_left} 次"),
+                  )
+                  conn.commit()
+                  if locked:
+                      return jsonify({"status": "error", "message": "PIN 連續錯誤過多，已暫停登入 15 分鐘", "retry_after": LOGIN_LOCK_SECONDS}), 429
+                  return jsonify({"status": "error", "message": f"PIN 錯誤，還可嘗試 {attempts_left} 次"}), 401
+              finally:
+                  conn.close()
+          '''
+          s, n = login_pattern.subn(login_new, s, count=1)
+          if n != 1:
+              raise SystemExit('auth_login patch failed')
+
+          logout_marker = '''@app.route("/api/auth/logout", methods=["POST"])
+          def auth_logout():
+          '''
+          reauth_block = '''@app.route("/api/auth/reauth", methods=["POST"])
+          @require_auth
+          def auth_reauth():
+              data = request.get_json() or {}
+              pin = str(data.get("password", "")).strip()
+              conn = get_db_connection()
+              try:
+                  cursor = conn.cursor()
+                  partner_name = str(session.get("partner_name") or "")
+                  remaining = _login_lock_remaining(cursor, partner_name)
+                  if remaining > 0:
+                      return jsonify({"message": "目前帳號暫時鎖定，請稍後再試", "retry_after": remaining}), 429
+                  user = cursor.execute("SELECT password_hash FROM partners WHERE id=?", (session.get("partner_id"),)).fetchone()
+                  if user and pin and check_password_hash(user["password_hash"], pin):
+                      _clear_login_failures(cursor, partner_name)
+                      session["reauth_until"] = int(time.time()) + 5 * 60
+                      log_action(cursor, "安全驗證", "敏感操作二次驗證成功")
+                      conn.commit()
+                      return jsonify({"status": "success", "valid_for": 300})
+                  fail_count, locked = _record_login_failure(cursor, partner_name)
+                  log_action(cursor, "安全驗證失敗", "二次驗證 PIN 錯誤")
+                  conn.commit()
+                  if locked:
+                      return jsonify({"message": "PIN 連續錯誤過多，已暫停驗證 15 分鐘"}), 429
+                  return jsonify({"message": f"PIN 錯誤，還可嘗試 {max(0, LOGIN_MAX_ATTEMPTS-fail_count)} 次"}), 401
+              finally:
+                  conn.close()
+
+
+          ''' + logout_marker
+          if '/api/auth/reauth' not in s:
+              s = replace_once(s, logout_marker, reauth_block, 'reauth endpoint')
+
+          delete_marker = '''        pid = request.args.get("id")
+              if cursor.execute("SELECT COUNT(*) FROM partners").fetchone()[0] <= 1:
+          '''
+          delete_new = '''        if not _recently_reauthed():
+                  return jsonify({"message": "刪除使用者前需要再次輸入目前使用者 PIN", "code": "reauth_required"}), 403
+              pid = request.args.get("id")
+              if cursor.execute("SELECT COUNT(*) FROM partners").fetchone()[0] <= 1:
+          '''
+          if delete_marker in s:
+              s = s.replace(delete_marker, delete_new, 1)
+
+          download_old = '''@app.route("/api/system/backup/download", methods=["GET"])
+          @require_auth
+          def system_backup_download_api():
+          '''
+          download_new = '''@app.route("/api/system/backup/download", methods=["GET"])
+          @require_auth
+          @require_recent_reauth
+          def system_backup_download_api():
+          '''
+          if download_old in s:
+              s = s.replace(download_old, download_new, 1)
+
+          app.write_text(s, encoding='utf-8')
+
+          html = Path('templates/index.html')
+          h = html.read_text(encoding='utf-8')
+          h = h.replace('partner_pin.length < 4', 'partner_pin.length < 6')
+          h = h.replace('個人 PIN 至少 4 碼', '個人 PIN 至少 6 碼')
+          h = h.replace('至少 4 碼', '至少 6 碼')
+          h = h.replace('至少4碼', '至少6碼')
+
+          fetch_pattern = re.compile(r'    const originalFetch = window\.fetch;\n    window\.fetch = async function\(resource, config = \{\}\) \{.*?\n    \};', re.S)
+          fetch_new = '''    let csrfToken = '';
+              const originalFetch = window.fetch;
+              window.fetch = async function(resource, config = {}) {
+                  const method = String(config.method || 'GET').toUpperCase();
+                  const sameOrigin = typeof resource !== 'string' || resource.startsWith('/') || resource.startsWith(window.location.origin);
+                  if (!config.headers) config.headers = {};
+                  config.headers = {
+                      ...config.headers,
+                      'Cache-Control': 'no-cache, no-store, must-revalidate',
+                      'Pragma': 'no-cache'
+                  };
+                  if (sameOrigin && !['GET','HEAD','OPTIONS'].includes(method) && csrfToken) {
+                      config.headers['X-CSRF-Token'] = csrfToken;
+                  }
+                  if (method === 'GET') {
+                      if (typeof resource === 'string') {
+                          const sep = resource.includes('?') ? '&' : '?';
+                          resource = resource + sep + '_t=' + Date.now();
+                      }
+                  }
+                  const res = await originalFetch(resource, config);
+                  if (res.status === 401 && typeof resource === 'string' && !resource.includes('/api/auth/')) {
+                      showLoginScreen();
+                  }
+                  return res;
+              };'''
+          h, n = fetch_pattern.subn(fetch_new, h, count=1)
+          if n != 1:
+              raise SystemExit('frontend fetch wrapper patch failed')
+
+          auth_line = '''        const auth = await authRes.json();
+              if (!auth.logged_in) {
+          '''
+          auth_line_new = '''        const auth = await authRes.json();
+              csrfToken = auth.csrf_token || '';
+              if (!auth.logged_in) {
+          '''
+          if auth_line in h:
+              h = h.replace(auth_line, auth_line_new, 1)
+
+          h = h.replace("await originalFetch('/api/auth/logout', {method:'POST'});", "await fetch('/api/auth/logout', {method:'POST'});")
+
+          delete_pattern = re.compile(r'    async function deletePartner\(id\) \{.*?\n    \}', re.S)
+          delete_new_js = '''    async function ensureSensitiveAuth() {
+              const pin = prompt('🔐 此操作較敏感，請再次輸入目前使用者 PIN：', '');
+              if (!pin) return false;
+              try {
+                  const res = await fetch('/api/auth/reauth', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password: pin})});
+                  const data = await res.json();
+                  if(!res.ok) { alert(data.message || '驗證失敗'); return false; }
+                  return true;
+              } catch(e) { alert('安全驗證失敗，請檢查連線。'); return false; }
+          }
+
+              async function deletePartner(id) {
+                  if(!confirm('刪除此使用者？')) return;
+                  if(!await ensureSensitiveAuth()) return;
+                  const res = await fetch(`/api/partners?id=${id}`, {method:'DELETE'}); const data = await res.json();
+                  if(!res.ok) alert(data.message || '刪除失敗');
+                  loadPeople();
+              }'''
+          h, n = delete_pattern.subn(delete_new_js, h, count=1)
+          if n != 1:
+              raise SystemExit('deletePartner patch failed')
+
+          download_pattern = re.compile(r'    function downloadDatabaseBackup\(\) \{.*?\n    \}', re.S)
+          download_new_js = '''    async function downloadDatabaseBackup() {
+              if(!await ensureSensitiveAuth()) return;
+              const a = document.createElement('a');
+              a.href = '/api/system/backup/download';
+              a.download = '';
+              document.body.appendChild(a); a.click(); a.remove();
+          }'''
+          h, n = download_pattern.subn(download_new_js, h, count=1)
+          if n != 1:
+              raise SystemExit('downloadDatabaseBackup patch failed')
+
+          html.write_text(h, encoding='utf-8')
+
+          Path('version.json').write_text(json.dumps({
+              'version': '1.5.3',
+              'release_notes': '安全更新：登入 PIN 防暴力破解、12 小時 Session、自動 CSRF 防護、Secure Cookie、安全標頭、敏感操作二次驗證；新設或修改 PIN 改為至少 6 碼。既有 PIN 仍可登入。'
+          }, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          readme = Path('README.md')
+          if readme.exists():
+              r = readme.read_text(encoding='utf-8').replace('V1.5.2', 'V1.5.3').replace('V1.5.1', 'V1.5.3')
+              if '## 安全機制' not in r:
+                  r += '''\n## 安全機制\n\nV1.5.3 起：\n- PIN 連續錯誤達 5 次會暫停登入 15 分鐘。\n- 新增或修改 PIN 至少 6 碼；既有 4 碼 PIN 可繼續登入，但之後修改時需改為 6 碼以上。\n- 登入 Session 最長 12 小時並使用 Secure / HttpOnly Cookie。\n- 修改資料的請求加入 CSRF 防護與同源檢查。\n- 下載完整資料庫與刪除使用者需再次輸入目前使用者 PIN。\n- 新增 HSTS、CSP、Referrer-Policy、Permissions-Policy 等安全標頭。\n'''
+              readme.write_text(r, encoding='utf-8')
+          PY
+
+      - name: Validate Python and JavaScript
+        shell: bash
+        run: |
+          python -m py_compile app.py
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          h = Path('templates/index.html').read_text(encoding='utf-8')
+          blocks = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', h, flags=re.S|re.I)
+          inline = [b for b in blocks if b.strip()]
+          Path('/tmp/pos-inline.js').write_text('\n'.join(inline), encoding='utf-8')
+          print('inline script blocks:', len(inline))
+          assert 'X-CSRF-Token' in h
+          assert 'ensureSensitiveAuth' in h
+          PY
+          node --check /tmp/pos-inline.js
+          grep -q 'APP_VERSION = "1.5.3"' app.py
+          grep -q 'CREATE TABLE IF NOT EXISTS login_security' app.py
+          grep -q 'def enforce_request_security' app.py
+          grep -q 'def auth_reauth' app.py
+          grep -q '"version": "1.5.3"' version.json
+
+      - name: Commit V1.5.3
+        shell: bash
+        run: |
+          git config user.name "fans-phone updater"
+          git config user.email "actions@users.noreply.github.com"
+          git add app.py templates/index.html version.json README.md
+          git commit -m "security: harden POS authentication V1.5.3"
+          git push origin main
