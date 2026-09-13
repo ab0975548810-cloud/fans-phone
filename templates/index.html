@@ -687,11 +687,21 @@
                     <div class="d-flex justify-content-between mb-1"><span class="text-secondary">最新備份</span><span class="fw-bold" id="systemLatestBackupText">讀取中...</span></div>
                     <div class="d-flex justify-content-between"><span class="text-secondary">備份保留</span><span class="small fw-bold text-end" id="systemBackupCountText">讀取中...</span></div>
                 </div>
+                <div class="border rounded p-3 bg-white mb-2">
+                    <div class="d-flex justify-content-between align-items-center gap-2">
+                        <span class="text-secondary">更新狀態</span>
+                        <span class="fw-bold text-secondary text-end" id="systemUpdateText">尚未檢查</span>
+                    </div>
+                    <div class="small text-secondary mt-2 d-none" id="systemUpdateNotes"></div>
+                </div>
+                <div class="d-grid gap-2 mb-2">
+                    <button type="button" class="btn btn-outline-dark fw-bold" onclick="checkForUpdates(this)">🔄 檢查更新</button>
+                </div>
                 <div class="d-grid gap-2 d-sm-flex">
                     <button type="button" class="btn btn-outline-primary fw-bold flex-fill" onclick="createManualBackup(this)">🛡️ 立即備份</button>
                     <button type="button" class="btn btn-outline-success fw-bold flex-fill" onclick="downloadDatabaseBackup()">⬇️ 下載備份</button>
                 </div>
-                <div class="small text-secondary mt-2">更新新版時只更新程式，<strong>/data/pos.db 不會跟著重建</strong>。建議每次更新前先按「立即備份」，並定期下載一份到電腦或雲端。</div>
+                <div class="small text-secondary mt-2">「檢查更新」只確認是否有新版，不會直接安裝。真正更新仍由 GitHub → Zeabur 重新部署；<strong>/data/pos.db 不會跟著重建</strong>。建議每次更新前先按「立即備份」。</div>
             </div>
             <div class="modal-footer p-2"><button class="btn btn-dark w-100 fw-bold" onclick="saveSettings()">💾 儲存設定</button></div>
         </div>
@@ -1145,6 +1155,39 @@
             document.getElementById('systemBackupCountText').textContent = '-';
         }
     }
+
+    async function checkForUpdates(btn) {
+    const original = btn.innerHTML;
+    const textEl = document.getElementById('systemUpdateText');
+    const notesEl = document.getElementById('systemUpdateNotes');
+    btn.disabled = true; btn.innerHTML = '⏳ 檢查中...';
+    textEl.textContent = '檢查中...';
+    textEl.className = 'fw-bold text-secondary text-end';
+    notesEl.classList.add('d-none');
+    notesEl.textContent = '';
+    try {
+        const res = await fetch('/api/system/update_check', {headers:{'Cache-Control':'no-cache'}});
+        const data = await res.json();
+        if(!res.ok) throw new Error(data.error || data.message || '檢查失敗');
+        if(data.update_available) {
+            textEl.textContent = `🆕 有新版 V${data.latest_version}`;
+            textEl.className = 'fw-bold text-primary text-end';
+            if(data.release_notes) { notesEl.textContent = data.release_notes; notesEl.classList.remove('d-none'); }
+            alert(`🆕 發現新版 V${data.latest_version}！\n目前版本：V${data.current_version}\n\n更新會由 GitHub → Zeabur 部署，請先按「立即備份」。`);
+        } else {
+            textEl.textContent = `✅ 已是最新版 V${data.current_version}`;
+            textEl.className = 'fw-bold text-success text-end';
+            if(data.release_notes) { notesEl.textContent = data.release_notes; notesEl.classList.remove('d-none'); }
+        }
+    } catch(e) {
+        textEl.textContent = '⚠️ 無法檢查更新';
+        textEl.className = 'fw-bold text-danger text-end';
+        notesEl.textContent = e.message || '請稍後再試';
+        notesEl.classList.remove('d-none');
+    } finally {
+        btn.disabled = false; btn.innerHTML = original;
+    }
+}
 
     async function createManualBackup(btn) {
         const original = btn.innerHTML; btn.disabled = true; btn.innerHTML = '⏳ 備份中...';

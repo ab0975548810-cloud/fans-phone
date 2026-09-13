@@ -1,0 +1,4 @@
+{
+  "version": "1.5.2",
+  "release_notes": "新增設定頁「檢查更新」：可比對 GitHub 最新版本；更新仍由 GitHub → Zeabur 部署，營業資料保留在 /data/pos.db。"
+}

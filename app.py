@@ -7,6 +7,8 @@ import time
 import secrets
 import json
 import calendar
+import urllib.request
+import urllib.error
 from datetime import datetime, timedelta
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -15,7 +17,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 TW_TZ = ZoneInfo("Asia/Taipei")
 DB_NAME = "pos.db"
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
+UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/ab0975548810-cloud/fans-phone/main/version.json"
 
 
 def get_db_dir():
@@ -725,12 +728,60 @@ def settings_api():
         conn.close()
 
 
+def _version_tuple(version):
+    parts = []
+    for part in str(version or "0").strip().lstrip("vV").split("."):
+        digits = "".join(ch for ch in part if ch.isdigit())
+        parts.append(int(digits or 0))
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
+def _check_update_payload():
+    req = urllib.request.Request(
+        UPDATE_MANIFEST_URL,
+        headers={"User-Agent": f"fans-phone-pos/{APP_VERSION}", "Cache-Control": "no-cache"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            manifest = json.loads(resp.read().decode("utf-8"))
+        latest = str(manifest.get("version") or "").strip().lstrip("vV")
+        if not latest:
+            raise ValueError("版本資訊缺少 version")
+        return {
+            "current_version": APP_VERSION,
+            "latest_version": latest,
+            "update_available": _version_tuple(latest) > _version_tuple(APP_VERSION),
+            "release_notes": str(manifest.get("release_notes") or "").strip(),
+            "checked_at": now_tw().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    except Exception as e:
+        return {
+            "current_version": APP_VERSION,
+            "latest_version": None,
+            "update_available": False,
+            "release_notes": "",
+            "checked_at": now_tw().strftime("%Y-%m-%d %H:%M:%S"),
+            "error": f"無法取得最新版本資訊：{e}",
+        }
+
+
 @app.route("/api/system/status", methods=["GET"])
 @require_auth
 def system_status_api():
     return jsonify(_backup_status_payload())
 
 
+
+
+@app.route("/api/system/update_check", methods=["GET"])
+@require_auth
+def system_update_check_api():
+    payload = _check_update_payload()
+    if payload.get("error"):
+        return jsonify(payload), 503
+    return jsonify(payload)
 @app.route("/api/system/backup", methods=["POST"])
 @require_auth
 def system_backup_api():
